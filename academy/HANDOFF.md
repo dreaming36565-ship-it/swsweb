@@ -30,6 +30,11 @@ academy 폴더의 학원 관리 웹앱을 이어서 개발할 거야.
 
 ## 2. 실행
 
+**저장소**: `https://github.com/dreaming36565-ship-it/swsweb` (비공개, 브랜치 `main`)
+작업 시작할 때 `git pull`, 끝낼 때 커밋 + `git push`. 한 번에 한 컴퓨터에서만 작업할 것.
+
+> 예전 저장소 `sws-maker/shuttle-dashboard` 는 접근 권한이 없어 더 이상 쓰지 않는다. 12장 6회차 참고.
+
 ```bash
 npm install --prefix academy     # 최초 1회
 npm run dev --prefix academy     # http://localhost:3100
