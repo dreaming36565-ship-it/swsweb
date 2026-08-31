@@ -144,7 +144,7 @@ export default function SrClient({ user }: { user: SessionUser }) {
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-muted">기준 시각</span>
-            <TimeSelect value={atMin} onChange={(v) => setAtMin(v ?? 0)} className="w-28" />
+            <TimeSelect value={atMin} onChange={(v) => setAtMin(v ?? DAY_START)} className="w-52" />
           </div>
           <select
             className="field w-36"

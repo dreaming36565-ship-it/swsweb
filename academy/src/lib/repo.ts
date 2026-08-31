@@ -6,7 +6,7 @@ import { rebuildSrForDay } from "./seed";
 import { AppError, assert } from "./errors";
 import { detectConflicts, type ConflictSession } from "./conflicts";
 import { movableSeats, SEATS, type SeatUse } from "./sr";
-import { toHHMM } from "./time";
+import { rangeLabel } from "./time";
 import type {
   AttendanceEvent,
   AttendanceRecord,
@@ -14,8 +14,11 @@ import type {
   ClassRow,
   Conflict,
   Department,
+  Makeup,
+  MakeupStatus,
   Notice,
   Notification,
+  PendingAbsence,
   Room,
   SessionType,
   SessionUser,
@@ -652,7 +655,7 @@ function openEvent(sessionId: number, date: string): number | null {
       s.teacher_id,
       "ATTENDANCE_TEACHER",
       "출석체크해주세요.",
-      `${s.class_name} ${toHHMM(s.start_min)}~${toHHMM(s.end_min)}`,
+      `${s.class_name} ${rangeLabel(s.start_min, s.end_min)}`,
       "/attendance",
     );
   }
@@ -753,7 +756,7 @@ export function submitAttendance(
   assert(ev, "출결 정보를 찾을 수 없습니다.");
 
   const isOwnClass = ev.teacher_id === user.id;
-  const label = `${ev.class_name} ${toHHMM(ev.start_min)}~${toHHMM(ev.end_min)}`;
+  const label = `${ev.class_name} ${rangeLabel(ev.start_min, ev.end_min)}`;
 
   if (step === "TEACHER") {
     assert(ev.stage === "TEACHER_PENDING", "이미 제출된 출석체크입니다.");
@@ -969,7 +972,7 @@ export type ScheduleItem = {
 };
 
 /** 오늘의 일정 — 선생님은 담당 수업, 관리자·데스크는 전체 */
-export function todaySchedule(user: SessionUser, dayOfWeek: number): ScheduleItem[] {
+export function todaySchedule(user: SessionUser, dayOfWeek: number, date?: string): ScheduleItem[] {
   const sessions = listSessions(dayOfWeek, "ALL");
   const mine = user.role === "TEACHER" ? sessions.filter((s) => s.teacherId === user.id) : sessions;
   const items: ScheduleItem[] = [];
@@ -989,5 +992,209 @@ export function todaySchedule(user: SessionUser, dayOfWeek: number): ScheduleIte
       });
     }
   }
+
+  // 보강도 담당 선생님 일정에 함께 뜬다
+  if (date) {
+    for (const m of listMakeups({ fromDate: date, toDate: date, status: "PLANNED" })) {
+      if (user.role === "TEACHER" && m.teacherId !== user.id) continue;
+      items.push({
+        startMin: m.startMin,
+        endMin: m.endMin,
+        title: `${m.studentName} 보강`,
+        subtitle: [m.className, m.roomName, m.teacherName ? `${m.teacherName} 선생님` : null]
+          .filter(Boolean)
+          .join(" · "),
+      });
+    }
+  }
+
   return items.sort((a, b) => a.startMin - b.startMin || a.title.localeCompare(b.title));
+}
+
+/* -------------------------------------------------------------------- 보강 */
+
+const MAKEUP_SELECT = `SELECT m.id, m.student_id AS studentId, st.name AS studentName,
+        m.class_id AS classId, c.name AS className, st.department,
+        m.absent_date AS absentDate, m.date, m.start_min AS startMin, m.end_min AS endMin,
+        m.room_id AS roomId, r.name AS roomName, m.teacher_id AS teacherId, u.name AS teacherName,
+        m.note, m.status, m.created_at AS createdAt
+   FROM makeups m
+   JOIN students st ON st.id = m.student_id
+   LEFT JOIN classes c ON c.id = m.class_id
+   LEFT JOIN rooms r ON r.id = m.room_id
+   LEFT JOIN users u ON u.id = m.teacher_id`;
+
+export function listMakeups(opts: {
+  dept?: DeptFilter;
+  fromDate?: string | null;
+  toDate?: string | null;
+  status?: MakeupStatus | "ALL";
+  teacherId?: number | null;
+} = {}): Makeup[] {
+  const args: (string | number)[] = [];
+  let sql = `${MAKEUP_SELECT} WHERE 1 = 1`;
+  if (opts.dept && opts.dept !== "ALL") {
+    sql += " AND st.department = ?";
+    args.push(opts.dept);
+  }
+  if (opts.fromDate) {
+    sql += " AND m.date >= ?";
+    args.push(opts.fromDate);
+  }
+  if (opts.toDate) {
+    sql += " AND m.date <= ?";
+    args.push(opts.toDate);
+  }
+  if (opts.status && opts.status !== "ALL") {
+    sql += " AND m.status = ?";
+    args.push(opts.status);
+  }
+  if (opts.teacherId) {
+    sql += " AND m.teacher_id = ?";
+    args.push(opts.teacherId);
+  }
+  sql += " ORDER BY m.date, m.start_min, m.id";
+  return rows<Makeup>(getDb().prepare(sql).all(...args));
+}
+
+/**
+ * 보강이 필요한 결석 목록.
+ * 횟수로 수강료를 받기 때문에 결석 1건마다 보강이 이루어졌는지 추적한다.
+ */
+export function pendingAbsences(dept: DeptFilter = "ALL", onlyUnfinished = false): PendingAbsence[] {
+  const w = deptWhere("c.department", dept);
+  let sql = `SELECT e.date, r.student_id AS studentId, st.name AS studentName,
+                    c.id AS classId, c.name AS className, c.department,
+                    s.teacher_id AS teacherId, u.name AS teacherName,
+                    r.absent_reason AS reason,
+                    m.id AS makeupId, m.status AS makeupStatus, m.date AS makeupDate
+               FROM attendance_records r
+               JOIN attendance_events e ON e.id = r.event_id
+               JOIN timetable_sessions s ON s.id = e.session_id
+               JOIN classes c ON c.id = s.class_id
+               JOIN students st ON st.id = r.student_id
+               LEFT JOIN users u ON u.id = s.teacher_id
+               LEFT JOIN makeups m ON m.student_id = r.student_id
+                                  AND m.absent_date = e.date
+                                  AND m.status <> 'CANCELED'
+              WHERE r.status = 'ABSENT'${w.sql}`;
+  if (onlyUnfinished) sql += " AND (m.id IS NULL OR m.status <> 'DONE')";
+  sql += " ORDER BY e.date DESC, c.name, st.id";
+  return rows<PendingAbsence>(getDb().prepare(sql).all(...w.args));
+}
+
+export type MakeupInput = {
+  studentId: number;
+  classId?: number | null;
+  absentDate?: string | null;
+  date: string;
+  startMin: number;
+  endMin: number;
+  roomId?: number | null;
+  teacherId?: number | null;
+  note?: string | null;
+};
+
+function validateMakeup(input: MakeupInput): void {
+  assert(input.studentId, "보강 대상 학생을 선택해 주세요.");
+  assert(input.date, "보강 날짜를 선택해 주세요.");
+  assert(
+    Number.isSafeInteger(input.startMin) && Number.isSafeInteger(input.endMin),
+    "보강 시간을 선택해 주세요.",
+  );
+  assert(input.endMin > input.startMin, "보강 종료시간은 시작시간보다 뒤여야 합니다.");
+}
+
+export function createMakeup(input: MakeupInput): number {
+  validateMakeup(input);
+  const db = getDb();
+
+  if (input.absentDate) {
+    const dup = row<{ n: number }>(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM makeups WHERE student_id = ? AND absent_date = ? AND status <> 'CANCELED'",
+        )
+        .get(input.studentId, input.absentDate),
+    );
+    assert((dup?.n ?? 0) === 0, "이 결석에는 이미 보강이 잡혀 있습니다.");
+  }
+
+  const r = db
+    .prepare(
+      `INSERT INTO makeups
+        (student_id, class_id, absent_date, date, start_min, end_min, room_id, teacher_id, note, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PLANNED', ?)`,
+    )
+    .run(
+      input.studentId,
+      input.classId ?? null,
+      input.absentDate || null,
+      input.date,
+      input.startMin,
+      input.endMin,
+      input.roomId ?? null,
+      input.teacherId ?? null,
+      input.note?.trim() || null,
+      nowIso(),
+    );
+
+  if (input.teacherId) {
+    const st = row<{ name: string }>(
+      db.prepare("SELECT name FROM students WHERE id = ?").get(input.studentId),
+    );
+    notify(
+      input.teacherId,
+      "MAKEUP",
+      "보강이 등록되었습니다.",
+      `${st?.name ?? "학생"} · ${input.date} ${rangeLabel(input.startMin, input.endMin)}`,
+      "/makeup",
+    );
+  }
+  return Number(r.lastInsertRowid);
+}
+
+export function updateMakeup(
+  id: number,
+  input: Partial<MakeupInput> & { status?: MakeupStatus },
+): void {
+  const db = getDb();
+  const cur = row<{ id: number }>(db.prepare("SELECT id FROM makeups WHERE id = ?").get(id));
+  assert(cur, "보강을 찾을 수 없습니다.");
+
+  if (input.date !== undefined) db.prepare("UPDATE makeups SET date = ? WHERE id = ?").run(input.date, id);
+  if (input.startMin !== undefined && input.endMin !== undefined) {
+    assert(input.endMin > input.startMin, "보강 종료시간은 시작시간보다 뒤여야 합니다.");
+    db.prepare("UPDATE makeups SET start_min = ?, end_min = ? WHERE id = ?").run(
+      input.startMin,
+      input.endMin,
+      id,
+    );
+  }
+  if (input.roomId !== undefined)
+    db.prepare("UPDATE makeups SET room_id = ? WHERE id = ?").run(input.roomId ?? null, id);
+  if (input.teacherId !== undefined)
+    db.prepare("UPDATE makeups SET teacher_id = ? WHERE id = ?").run(input.teacherId ?? null, id);
+  if (input.note !== undefined)
+    db.prepare("UPDATE makeups SET note = ? WHERE id = ?").run(input.note?.trim() || null, id);
+  if (input.status !== undefined)
+    db.prepare("UPDATE makeups SET status = ? WHERE id = ?").run(input.status, id);
+}
+
+export function deleteMakeup(id: number): void {
+  getDb().prepare("DELETE FROM makeups WHERE id = ?").run(id);
+}
+
+/** 보강 현황 요약 — 횟수 관리를 위해 한눈에 본다 */
+export function makeupSummary(dept: DeptFilter = "ALL") {
+  const all = pendingAbsences(dept);
+  let notScheduled = 0;
+  let planned = 0;
+  let done = 0;
+  for (const a of all) {
+    if (!a.makeupId) notScheduled += 1;
+    else if (a.makeupStatus === "DONE") done += 1;
+    else planned += 1;
+  }
+  return { absences: all.length, notScheduled, planned, done };
 }

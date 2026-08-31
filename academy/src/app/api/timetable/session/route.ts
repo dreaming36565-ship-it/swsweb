@@ -14,6 +14,8 @@ import type { Department, SessionType } from "@/lib/types";
 type Body = {
   id?: number;
   dayOfWeek: number;
+  /** 같은 수업을 여러 요일에 한 번에 넣을 때 (월·수·금 등). 없으면 dayOfWeek 하나만 */
+  days?: number[];
   /** 기존 반이면 classId, 직접 입력이면 className + department */
   classId?: number | null;
   className?: string | null;
@@ -60,7 +62,16 @@ function toInput(body: Body): SessionInput {
 export const POST = withUser(async ({ user, req }) => {
   requirePermission(user, "timetable.write");
   const body = await readJson<Body>(req);
-  return { id: createSession(toInput(body)) };
+
+  const days = (body.days?.length ? body.days : [body.dayOfWeek]).filter(
+    (d, i, arr) => Number.isSafeInteger(d) && d >= 0 && d <= 6 && arr.indexOf(d) === i,
+  );
+  assert(days.length > 0, "요일을 하나 이상 선택해 주세요.");
+
+  // 반·강의실 "직접 입력(신규 생성)"이 요일마다 중복 생성되지 않도록 한 번만 해석한다
+  const base = toInput({ ...body, dayOfWeek: days[0] });
+  const ids = days.map((day) => createSession({ ...base, dayOfWeek: day }));
+  return { ids, count: ids.length };
 });
 
 export const PATCH = withUser(async ({ user, req }) => {

@@ -2,7 +2,8 @@
 
 export type Role = "ADMIN" | "TEACHER" | "DESK";
 export type Department = "ELEM" | "HIGH";
-export type SessionType = "REGULAR" | "MAKEUP" | "ALPHA" | "COUNSEL" | "EXAM";
+/** 수업 종류 — 보강은 여기 없다. 보강은 `보강 관리` 탭에서 따로 다룬다. */
+export type SessionType = "COMMON" | "INDIVIDUAL" | "REGULAR" | "REVIEW" | "ALPHA";
 export type Stage = "TEACHER_PENDING" | "DESK_PENDING" | "TEACHER_CONFIRM" | "DONE";
 export type AttStatus = "UNCHECKED" | "PRESENT" | "ABSENT" | "LATE";
 
@@ -13,11 +14,20 @@ export const ROLE_LABEL: Record<Role, string> = {
 };
 
 export const SESSION_TYPE_LABEL: Record<SessionType, string> = {
-  REGULAR: "정규수업",
-  MAKEUP: "보강",
+  COMMON: "공통",
+  INDIVIDUAL: "개별",
+  REGULAR: "정규",
+  REVIEW: "누적오답",
   ALPHA: "알파",
-  COUNSEL: "상담",
-  EXAM: "시험",
+};
+
+/** 보강 진행 상태 */
+export type MakeupStatus = "PLANNED" | "DONE" | "CANCELED";
+
+export const MAKEUP_STATUS_LABEL: Record<MakeupStatus, string> = {
+  PLANNED: "예정",
+  DONE: "완료",
+  CANCELED: "취소",
 };
 
 export const STAGE_LABEL: Record<Stage, string> = {
@@ -200,4 +210,44 @@ export type StaffUser = {
   role: Role;
   department: Department;
   active: 0 | 1;
+};
+
+/** 보강 1건 — 정규 시간표와 별개로 특정 날짜에 잡힌다 */
+export type Makeup = {
+  id: number;
+  studentId: number;
+  studentName: string;
+  classId: number | null;
+  className: string | null;
+  department: Department;
+  /** 보강 사유가 된 결석 날짜 (직접 만든 보강이면 null) */
+  absentDate: string | null;
+  /** 보강을 진행하는 날짜 */
+  date: string;
+  startMin: number;
+  endMin: number;
+  roomId: number | null;
+  roomName: string | null;
+  teacherId: number | null;
+  teacherName: string | null;
+  note: string | null;
+  status: MakeupStatus;
+  createdAt: string;
+};
+
+/** 보강이 필요한 결석 — 출결 기록에서 뽑는다. 횟수제 수강료라 빠짐없이 챙겨야 한다. */
+export type PendingAbsence = {
+  date: string;
+  studentId: number;
+  studentName: string;
+  classId: number;
+  className: string;
+  department: Department;
+  teacherId: number | null;
+  teacherName: string | null;
+  reason: string | null;
+  /** 이미 잡힌 보강 */
+  makeupId: number | null;
+  makeupStatus: MakeupStatus | null;
+  makeupDate: string | null;
 };

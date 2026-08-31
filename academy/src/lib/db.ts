@@ -121,6 +121,23 @@ CREATE TABLE IF NOT EXISTS notices (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS makeups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL,
+  absent_date TEXT,
+  date TEXT NOT NULL,
+  start_min INTEGER NOT NULL,
+  end_min INTEGER NOT NULL,
+  room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
+  teacher_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  note TEXT,
+  status TEXT NOT NULL DEFAULT 'PLANNED',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_makeups_date ON makeups(date);
+CREATE INDEX IF NOT EXISTS idx_makeups_absence ON makeups(student_id, absent_date);
 CREATE INDEX IF NOT EXISTS idx_sessions_day ON timetable_sessions(day_of_week);
 CREATE INDEX IF NOT EXISTS idx_sr_day ON sr_assignments(day_of_week);
 CREATE INDEX IF NOT EXISTS idx_students_class ON students(class_id);

@@ -110,9 +110,13 @@ npm run seed --prefix academy    # DB 삭제 → 다음 실행 때 데모 데이
 - 팝업 오른쪽 위 `1분마다 알림` 버튼으로 그 팝업만 음소거. 설정에서 전체 on/off + 미리듣기.
 - 구현: `src/lib/alarm.ts` + `src/components/useAlarmLoop.ts`.
 
-### 4.8 시간 입력
-- 모든 시각은 **10분 단위**로만 선택 가능 (`src/components/TimeSelect.tsx`, 06:00~23:50).
-- 저장 형식은 **자정으로부터의 분(minute) 정수**. `toMin()` / `toHHMM()` (`src/lib/time.ts`).
+### 4.8 시간 입력 · 표기
+- 입력은 **오전/오후를 먼저 고르고 시:분을 고르는 방식**. 10분 단위만
+  (`src/components/TimeSelect.tsx`, 오전 6:00 ~ 오후 11:50).
+- **화면 표기는 앱 전체가 오전/오후(12시간제)** 다. 24시간 표기는 헷갈린다는 요청으로 쓰지 않는다.
+  `fmtTime()` → `오후 2:40`, `rangeLabel()` → `오후 2:40 ~ 5:10` (`src/lib/time.ts`).
+  `toHHMM()` 은 내부 저장·비교용이며 화면에 쓰지 말 것.
+- 저장 형식은 여전히 **자정으로부터의 분(minute) 정수**. `toMin()` / `toHHMM()`.
 
 ### 4.9 권한
 | 기능 | ADMIN | TEACHER | DESK |
@@ -144,7 +148,34 @@ npm run seed --prefix academy    # DB 삭제 → 다음 실행 때 데모 데이
 | 데스크 팝업 하단 | `체크되지 않은 친구들 전화 돌려주시고, 지각사유와 도착예정시간 남겨주세요.` |
 | 선생님 최종 팝업 | `출결사항 확인해주세요.` |
 | 사이드바 메뉴 | `결석관리` (출결관리 아님) |
+| 사이드바 메뉴 | `보강 관리` |
 | 시간표 입력 버튼 | `입력완료` |
+
+### 4.12 수업 종류
+`공통 · 개별 · 정규 · 누적오답 · 알파` 5종 (`SESSION_TYPE_LABEL`).
+DB 값은 `COMMON`, `INDIVIDUAL`, `REGULAR`, `REVIEW`, `ALPHA`.
+**보강은 수업 종류가 아니다** — 보강은 `보강 관리` 탭에서 날짜 단위로 따로 관리한다(4.14).
+
+### 4.13 시간표 입력의 요일 다중 선택
+같은 수업이 주 2~3회인 경우가 많아, 시간표 입력에서 **요일을 여러 개 선택**하면
+한 번의 `입력완료` 로 그 요일들에 같은 수업이 모두 생성된다.
+수정 모드에서는 요일을 하나만 고를 수 있다(그 수업 1건만 바뀐다).
+
+### 4.14 보강 관리 (핵심)
+> 횟수로 수강료를 받기 때문에 **결석 1건마다 보강이 이루어졌는지** 반드시 추적해야 한다.
+
+- 사이드바 메뉴명은 **`보강 관리`**.
+- `결석관리`에서 **결석**으로 처리된 건이 자동으로 "보강이 필요한 결석" 목록에 쌓인다.
+- `보강 잡기` → 날짜·시간·강의실·담당 선생님을 넣으면 보강 1건이 등록되고 그 결석과 연결된다
+  (같은 결석에 보강을 두 번 등록할 수 없다).
+- 등록한 보강은 **담당 선생님의 대시보드 "오늘의 일정"** 과 **시간표 관리**(해당 요일, 앰버 점선 블록)에 표시된다.
+- 상태는 `예정 / 완료 / 취소`. 보강을 진행하면 `완료` 로 체크한다.
+- 정규 시간표(`timetable_sessions`)와는 **별도 테이블(`makeups`)** 이다.
+  요일 반복이 아니라 특정 날짜 1회이기 때문.
+
+### 4.15 확인창은 엔터로 확정
+`useConfirm()` 확인창이 뜨면 **확인 버튼에 포커스가 잡히고, 엔터를 누르면 바로 확정**된다(취소는 ESC).
+마우스로 일일이 누르지 않기 위한 것이므로 이 동작을 없애지 말 것.
 
 ---
 
@@ -158,6 +189,7 @@ npm run seed --prefix academy    # DB 삭제 → 다음 실행 때 데모 데이
 | `/sr` | SR 관리 | `components/sr/SrClient.tsx` |
 | `/classes` | 반 관리 | `components/classes/ClassesClient.tsx` |
 | `/attendance` | 결석관리 | `components/attendance/AttendanceClient.tsx` |
+| `/makeup` | 보강 관리 | `components/makeup/MakeupClient.tsx` |
 | `/notices` | 알림 & 공지 | `components/NoticesClient.tsx` |
 | `/tasks` | 업무 지시 | `components/TasksClient.tsx` |
 | `/settings` | 설정 | `components/settings/SettingsClient.tsx` |
@@ -187,6 +219,7 @@ academy/src/
 │  ├─ Modal.tsx / Icons.tsx / LiveClock.tsx / NotificationBell.tsx / DashboardTasks.tsx
 │  ├─ useAlarmLoop.ts         ★ 1분마다 3초 알림음 루프
 │  ├─ attendance/             출결 팝업 3종 + PopupFrame + AttendanceHost + 결석관리 페이지
+│  ├─ makeup/                 보강 관리 화면
 │  ├─ classes/ settings/ sr/ timetable/
 └─ lib/
    ├─ db.ts                   ★ 스키마 + SQLite 연결 (싱글턴)
@@ -210,7 +243,7 @@ academy/src/
 | --- | --- | --- |
 | POST | `/api/auth/login` `/logout` · GET `/me` | 세션 |
 | GET | `/api/timetable?day=&dept=` | 시간표 + 강의실/반/선생님/SR배정/충돌 한 번에 |
-| POST/PATCH/DELETE | `/api/timetable/session` | 수업 CRUD (ADMIN) |
+| POST/PATCH/DELETE | `/api/timetable/session` | 수업 CRUD (ADMIN). POST 는 `days: number[]` 로 여러 요일 동시 생성 |
 | GET | `/api/sr?day=&dept=` | 좌석 배정 |
 | GET | `/api/sr/options?assignmentId=` | 이동 가능 좌석 |
 | POST | `/api/sr/move` · `/api/sr/reset` | 좌석 이동 / 요일 자동배정 재계산 |
@@ -218,6 +251,7 @@ academy/src/
 | POST | `/api/attendance/submit` | `step: TEACHER \| DESK \| CONFIRM` 단계 전이 |
 | POST | `/api/attendance/trigger` | 수동으로 출결 즉시 열기 |
 | GET | `/api/attendance/list?date=&dept=` | 결석관리 페이지 |
+| GET/POST/PATCH/DELETE | `/api/makeups?dept=&unfinished=` | 보강 CRUD + 보강이 필요한 결석 목록 |
 | GET/POST/PATCH/DELETE | `/api/classes` | 반 CRUD (payload에 rooms/teachers/students 동봉) |
 | GET/POST/PATCH/DELETE | `/api/rooms` | 강의실 CRUD (`move: -1\|1` 로 순서 변경) |
 | GET/POST/PATCH/DELETE | `/api/users` | 계정 CRUD (ADMIN) |
@@ -241,13 +275,16 @@ attendance_records(id, event_id, student_id, status, absent_reason, late_reason,
 notifications(id, user_id, kind, title, body, link, read_at, created_at)
 tasks(id, assignee_id, created_by, title, done, due_date, created_at)
 notices(id, title, body, department, author_id, created_at)
+makeups(id, student_id, class_id, absent_date, date, start_min, end_min,
+        room_id, teacher_id, note, status, created_at)
 ```
 
 - `role`: `ADMIN | TEACHER | DESK`
 - `department`: `ELEM | HIGH`
-- `type`: `REGULAR | MAKEUP | ALPHA | COUNSEL | EXAM`
+- `type`: `COMMON | INDIVIDUAL | REGULAR | REVIEW | ALPHA`
 - `stage`: `TEACHER_PENDING → DESK_PENDING → TEACHER_CONFIRM → DONE`
-- `status`: `UNCHECKED | PRESENT | ABSENT | LATE`
+- `attendance_records.status`: `UNCHECKED | PRESENT | ABSENT | LATE`
+- `makeups.status`: `PLANNED | DONE | CANCELED`
 
 ## 9. 디자인 시스템
 
@@ -308,7 +345,9 @@ notices(id, title, body, department, author_id, created_at)
 - 실시간이 **폴링**(출결 4초, 알림 8초, 결석관리 5초). SSE/WebSocket 아님.
 - 출결 자동 트리거가 접속 중일 때만 동작(위 gotcha 12번). 서버 크론이 필요하면 별도 구현.
 - 학생은 **반 1개에만** 소속(`students.class_id` 단일). 복수 반 수강 미지원.
-- 수업 종류(보강/상담/시험)별 세부 로직 없음 — 라벨과 색만 다름.
+- 수업 종류(공통/개별/누적오답)별 세부 로직 없음 — 라벨과 색만 다름.
+- 보강은 **강의실·선생님 충돌을 검사하지 않는다.** 정규 시간표와 겹쳐도 경고가 뜨지 않는다.
+- 시간표 관리에는 **오늘 이후의 예정 보강**만 그 요일에 표시된다(지난 보강은 보강 관리에서 본다).
 - 출결 통계·기간별 리포트·엑셀 내보내기 없음.
 - 모바일 대응 없음(의도적, Desktop First).
 - 자동화 테스트 없음. 브라우저 수동 검증으로만 확인했다.
@@ -330,6 +369,7 @@ notices(id, title, body, department, author_id, created_at)
 | 4 | 반 관리에서 학교 제거, 학생 명단 **수정+삭제**, `window.confirm` → **앱 내부 확인 모달**(삭제 먹통 버그 수정), 시간표 입력에 **요일 선택** 추가 |
 | 5 | 시간 입력 **10분 단위 드롭다운**, 출결 팝업 **알림음**(팝업 시 + 제출 전까지 1분마다 3초), 시간표 세로축 범위 자동 조정(토요일 오전 수업 표시 수정) |
 | 6 | **2026-09-01 — 소스 코드 재구축.** 원본 저장소(`sws-maker/shuttle-dashboard`)에 접근할 수 없어, 이 문서와 `CLAUDE.md`·기획 프롬프트를 근거로 앱 전체를 새로 구현했다. 확정 사항·고정 문구·DB 스키마·API 목록·디자인 토큰은 문서대로 복원했다. 아래 "13. 재구축 시 달라진 점" 참고 |
+| 7 | **2026-09-01 — 시간 표기·수업 종류·보강 관리.** 시간 입력을 오전/오후 분리 방식으로 바꾸고 **앱 전체 표기를 12시간제**로 통일. 수업 종류를 `공통·개별·정규·누적오답·알파` 로 교체(보강 제외). 시간표 입력에 **요일 다중 선택** 추가. **`보강 관리` 탭 신설**(결석↔보강 추적, `makeups` 테이블). 확인창을 **엔터로 확정** 가능하게 함 |
 
 ## 13. 재구축(6회차) 시 달라진 점
 

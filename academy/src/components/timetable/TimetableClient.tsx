@@ -10,12 +10,13 @@ import { useConfirm } from "../ConfirmDialog";
 import { IconTrash, IconWarning } from "../Icons";
 import { apiDelete, apiGet, apiPatch, apiPost, errorMessage } from "@/lib/http";
 import { classColor } from "@/lib/colors";
-import { DAY_LABELS, STEP, rangeLabel, toHHMM } from "@/lib/time";
+import { DAY_LABELS, STEP, fmtTime, formatDateShort, parseDateKey, rangeLabel } from "@/lib/time";
 import {
   SESSION_TYPE_LABEL,
   type ClassRow,
   type Conflict,
   type Department,
+  type Makeup,
   type Room,
   type SessionType,
   type SessionUser,
@@ -31,12 +32,15 @@ type Payload = {
   teachers: { id: number; name: string; department: Department }[];
   srAssignments: SrAssignment[];
   conflicts: Conflict[];
+  makeups: Makeup[];
 };
 
 const ROW_H = 22; // 10분당 높이(px)
 
-const emptyForm = (department: Department) => ({
+const emptyForm = (department: Department, day: number) => ({
   id: null as number | null,
+  /** 같은 수업이 주 2~3회인 경우가 많아 요일을 여러 개 고를 수 있다 */
+  days: [day] as number[],
   classValue: { id: null, name: "" } as ComboValue,
   department,
   type: "REGULAR" as SessionType,
@@ -56,7 +60,7 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
   const [day, setDay] = useState<number>(() => new Date().getDay());
   const [dept, setDept] = useState<"ALL" | Department>("ALL");
   const [data, setData] = useState<Payload | null>(null);
-  const [form, setForm] = useState(emptyForm(user.department));
+  const [form, setForm] = useState(() => emptyForm(user.department, new Date().getDay()));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -89,6 +93,12 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
   const sessions = data?.sessions ?? [];
   const conflicts = data?.conflicts ?? [];
 
+  // 보강은 특정 날짜에 1회 잡히므로, 지금 보고 있는 요일과 같은 날의 예정 보강만 함께 그린다
+  const dayMakeups = useMemo(
+    () => (data?.makeups ?? []).filter((m) => parseDateKey(m.date).getDay() === day),
+    [data, day],
+  );
+
   // 세로축 범위 자동 조정 — 토요일 오전 수업도 보이도록
   const { gridStart, gridEnd } = useMemo(() => {
     const points: number[] = [];
@@ -97,6 +107,7 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
       if (s.alphaStartMin !== null) points.push(s.alphaStartMin);
       if (s.alphaEndMin !== null) points.push(s.alphaEndMin);
     }
+    for (const m of dayMakeups) points.push(m.startMin, m.endMin);
     if (points.length === 0) return { gridStart: 14 * 60, gridEnd: 22 * 60 };
     const min = Math.min(...points);
     const max = Math.max(...points);
@@ -104,9 +115,21 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
       gridStart: Math.floor((min - STEP) / 60) * 60,
       gridEnd: Math.ceil((max + STEP) / 60) * 60,
     };
-  }, [sessions]);
+  }, [sessions, dayMakeups]);
 
   const slots = Math.max(1, (gridEnd - gridStart) / STEP);
+
+  /** 강의실별 보강 블록 */
+  const makeupsByRoom = useMemo(() => {
+    const map = new Map<number, Makeup[]>();
+    for (const m of dayMakeups) {
+      if (m.roomId === null) continue;
+      const list = map.get(m.roomId) ?? [];
+      list.push(m);
+      map.set(m.roomId, list);
+    }
+    return map;
+  }, [dayMakeups]);
 
   const blocksByRoom = useMemo(() => {
     const map = new Map<number, { key: string; session: TimetableSession; start: number; end: number; isAlpha: boolean }[]>();
@@ -138,6 +161,7 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
     setError(null);
     setForm({
       id: s.id,
+      days: [s.dayOfWeek],
       classValue: { id: s.classId, name: s.className },
       department: s.department,
       type: s.type,
@@ -154,8 +178,17 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
   const resetForm = () => {
     const sr = rooms.find((r) => r.isSr === 1);
     setForm({
-      ...emptyForm(user.department),
+      ...emptyForm(user.department, day),
       alphaRoomValue: sr ? { id: sr.id, name: sr.name } : { id: null, name: "" },
+    });
+  };
+
+  const toggleDay = (d: number) => {
+    setForm((f) => {
+      if (f.id) return { ...f, days: [d] }; // 수정 중에는 요일 하나만
+      const has = f.days.includes(d);
+      const next = has ? f.days.filter((x) => x !== d) : [...f.days, d].sort();
+      return { ...f, days: next };
     });
   };
 
@@ -169,10 +202,15 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
       setError("수업 시작시간과 종료시간을 선택해 주세요.");
       return;
     }
+    if (form.days.length === 0) {
+      setError("요일을 하나 이상 선택해 주세요.");
+      return;
+    }
     setBusy(true);
     const body = {
       id: form.id ?? undefined,
-      dayOfWeek: day,
+      dayOfWeek: form.days[0],
+      days: form.days,
       classId: form.classValue.id,
       className: form.classValue.name,
       department: form.department,
@@ -188,8 +226,13 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
       teacherId: form.teacherId,
     };
     try {
-      if (form.id) await apiPatch("/api/timetable/session", body);
-      else await apiPost("/api/timetable/session", body);
+      if (form.id) {
+        await apiPatch("/api/timetable/session", body);
+      } else {
+        await apiPost("/api/timetable/session", body);
+        // 지금 보고 있는 요일에 안 넣었으면, 넣은 요일로 옮겨서 바로 확인되게 한다
+        if (!form.days.includes(day)) setDay(form.days[0]);
+      }
       resetForm();
       await load();
     } catch (e) {
@@ -274,8 +317,33 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
 
             <div className="mt-4 space-y-3">
               <div>
-                <label className="label">요일</label>
-                <div className="text-sm font-semibold text-navy-800">{DAY_LABELS[day]}요일</div>
+                <label className="label">
+                  요일{form.id ? "" : " (여러 개 선택 가능)"}
+                </label>
+                <div className="flex gap-1">
+                  {DAY_LABELS.map((label, i) => {
+                    const on = form.days.includes(i);
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => toggleDay(i)}
+                        className={`h-8 flex-1 rounded-md border text-sm font-bold transition-colors ${
+                          on
+                            ? "border-navy-800 bg-navy-800 text-white"
+                            : "border-line bg-white text-muted hover:bg-navy-50"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {!form.id ? (
+                  <p className="mt-1 text-xs text-muted">
+                    월·수·금처럼 여러 요일을 고르면 한 번에 다 들어갑니다.
+                  </p>
+                ) : null}
               </div>
 
               <div>
@@ -319,23 +387,21 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="label">수업 시작</label>
-                  <TimeSelect
-                    value={form.startMin}
-                    onChange={(v) => setForm({ ...form, startMin: v })}
-                    allowEmpty
-                  />
-                </div>
-                <div>
-                  <label className="label">수업 종료</label>
-                  <TimeSelect
-                    value={form.endMin}
-                    onChange={(v) => setForm({ ...form, endMin: v })}
-                    allowEmpty
-                  />
-                </div>
+              <div>
+                <label className="label">수업 시작</label>
+                <TimeSelect
+                  value={form.startMin}
+                  onChange={(v) => setForm({ ...form, startMin: v })}
+                  allowEmpty
+                />
+              </div>
+              <div>
+                <label className="label">수업 종료</label>
+                <TimeSelect
+                  value={form.endMin}
+                  onChange={(v) => setForm({ ...form, endMin: v })}
+                  allowEmpty
+                />
               </div>
 
               <div>
@@ -348,25 +414,23 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="label">알파 시작</label>
-                  <TimeSelect
-                    value={form.alphaStartMin}
-                    onChange={(v) => setForm({ ...form, alphaStartMin: v })}
-                    allowEmpty
-                    emptyLabel="없음"
-                  />
-                </div>
-                <div>
-                  <label className="label">알파 종료</label>
-                  <TimeSelect
-                    value={form.alphaEndMin}
-                    onChange={(v) => setForm({ ...form, alphaEndMin: v })}
-                    allowEmpty
-                    emptyLabel="없음"
-                  />
-                </div>
+              <div>
+                <label className="label">알파 시작</label>
+                <TimeSelect
+                  value={form.alphaStartMin}
+                  onChange={(v) => setForm({ ...form, alphaStartMin: v })}
+                  allowEmpty
+                  emptyLabel="없음"
+                />
+              </div>
+              <div>
+                <label className="label">알파 종료</label>
+                <TimeSelect
+                  value={form.alphaEndMin}
+                  onChange={(v) => setForm({ ...form, alphaEndMin: v })}
+                  allowEmpty
+                  emptyLabel="없음"
+                />
               </div>
 
               <div>
@@ -439,14 +503,15 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
           <div className="flex items-center justify-between border-b border-line px-5 py-3">
             <h2 className="text-base font-bold text-ink">{DAY_LABELS[day]}요일 시간표</h2>
             <span className="text-xs text-muted">
-              {toHHMM(gridStart)} ~ {toHHMM(gridEnd)} · 10분 단위
+              {fmtTime(gridStart)} ~ {fmtTime(gridEnd)} · 10분 단위
+              {dayMakeups.length > 0 ? ` · 보강 ${dayMakeups.length}건` : ""}
             </span>
           </div>
 
           <div className="overflow-auto">
             <div className="flex min-w-[720px]">
               {/* 시간 눈금 */}
-              <div className="w-16 shrink-0 border-r border-line">
+              <div className="w-24 shrink-0 border-r border-line">
                 <div className="h-9 border-b border-line" />
                 <div className="relative" style={{ height: slots * ROW_H }}>
                   {Array.from({ length: slots }, (_, i) => {
@@ -460,7 +525,7 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
                         }`}
                         style={{ top: i * ROW_H, height: ROW_H }}
                       >
-                        <span className="pl-2">{onHour ? toHHMM(m) : ""}</span>
+                        <span className="pl-2">{onHour ? fmtTime(m) : ""}</span>
                       </div>
                     );
                   })}
@@ -522,6 +587,33 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
                             </>
                           ) : null}
                         </button>
+                      );
+                    })}
+
+                    {/* 보강 — 특정 날짜 1회라 점선으로 구분해 그린다 */}
+                    {(makeupsByRoom.get(room.id) ?? []).map((m) => {
+                      const top = ((m.startMin - gridStart) / STEP) * ROW_H;
+                      const height = Math.max(ROW_H, ((m.endMin - m.startMin) / STEP) * ROW_H);
+                      return (
+                        <div
+                          key={`m${m.id}`}
+                          className="absolute left-1 right-1 overflow-hidden rounded-md border-2 border-dashed border-late bg-late-soft px-2 py-1 text-left text-late"
+                          style={{ top, height }}
+                          title={`${m.studentName} 보강 · ${formatDateShort(m.date)} ${rangeLabel(m.startMin, m.endMin)}`}
+                        >
+                          <div className="truncate text-xs font-bold">{m.studentName} 보강</div>
+                          {height > ROW_H * 2 ? (
+                            <>
+                              <div className="truncate text-[11px] opacity-80">
+                                {formatDateShort(m.date)}
+                                {m.teacherName ? ` · ${m.teacherName}` : ""}
+                              </div>
+                              <div className="truncate text-[11px] tabular-nums opacity-70">
+                                {rangeLabel(m.startMin, m.endMin)}
+                              </div>
+                            </>
+                          ) : null}
+                        </div>
                       );
                     })}
                   </div>

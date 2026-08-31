@@ -148,3 +148,16 @@ export const IconVolume = ({ className }: Props) => (
     <path d="M16 9a4 4 0 0 1 0 6" />
   </svg>
 );
+
+export const IconRefresh = ({ className }: Props) => (
+  <svg {...base(className)}>
+    <path d="M21 12a9 9 0 0 1-15.4 6.4L3 16M3 12a9 9 0 0 1 15.4-6.4L21 8" />
+    <path d="M21 4v4h-4M3 20v-4h4" />
+  </svg>
+);
+
+export const IconCheck = ({ className }: Props) => (
+  <svg {...base(className)}>
+    <path d="m5 12 5 5L20 7" />
+  </svg>
+);

@@ -13,7 +13,7 @@ export default async function DashboardPage() {
 
   const now = new Date();
   const today = dateKey(now);
-  const schedule = todaySchedule(user, now.getDay());
+  const schedule = todaySchedule(user, now.getDay(), today);
   const tasks = listTasks({ assigneeId: user.id });
   const summary = attendanceSummary(today, "ALL");
   const notices = listNotices(user.department, 3);

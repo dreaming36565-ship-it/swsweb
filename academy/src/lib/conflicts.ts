@@ -1,7 +1,7 @@
 // 시간표 충돌 감지 — DB를 모르는 순수 함수.
 
 import type { Conflict } from "./types";
-import { overlaps, toHHMM, STEP } from "./time";
+import { overlaps, fmtTime, rangeLabel, STEP } from "./time";
 import { SEAT_CAPACITY } from "./sr";
 
 export type ConflictSession = {
@@ -77,9 +77,7 @@ export function detectConflicts(
       if (!overlaps(a.start, a.end, b.start, b.end)) continue;
       out.push({
         kind: "ROOM",
-        message: `강의실 중복 — ${a.roomName}: ${a.label}(${toHHMM(a.start)}~${toHHMM(
-          a.end
-        )}) ↔ ${b.label}(${toHHMM(b.start)}~${toHHMM(b.end)})`,
+        message: `강의실 중복 — ${a.roomName}: ${a.label}(${rangeLabel(a.start, a.end)}) ↔ ${b.label}(${rangeLabel(b.start, b.end)})`,
         sessionIds: [a.sessionId, b.sessionId],
       });
     }
@@ -94,9 +92,7 @@ export function detectConflicts(
       if (!overlaps(a.startMin, a.endMin, b.startMin, b.endMin)) continue;
       out.push({
         kind: "TEACHER",
-        message: `선생님 중복 — ${a.teacherName}: ${a.className}(${toHHMM(a.startMin)}~${toHHMM(
-          a.endMin
-        )}) ↔ ${b.className}(${toHHMM(b.startMin)}~${toHHMM(b.endMin)})`,
+        message: `선생님 중복 — ${a.teacherName}: ${a.className}(${rangeLabel(a.startMin, a.endMin)}) ↔ ${b.className}(${rangeLabel(b.startMin, b.endMin)})`,
         sessionIds: [a.id, b.id],
       });
     }
@@ -120,9 +116,7 @@ export function detectConflicts(
           seenPair.add(key);
           out.push({
             kind: "STUDENT",
-            message: `학생 일정 중복 — ${shared.length}명: ${x.label}(${toHHMM(
-              x.start
-            )}~${toHHMM(x.end)}) ↔ ${y.label}(${toHHMM(y.start)}~${toHHMM(y.end)})`,
+            message: `학생 일정 중복 — ${shared.length}명: ${x.label}(${rangeLabel(x.start, x.end)}) ↔ ${y.label}(${rangeLabel(y.start, y.end)})`,
             sessionIds: [a.id, b.id],
           });
         }
@@ -153,7 +147,7 @@ export function detectConflicts(
     if (worst.count > SEAT_CAPACITY) {
       out.push({
         kind: "SR_CAPACITY",
-        message: `SR 좌석 초과 — ${toHHMM(worst.at)} 기준 ${worst.count}명 (${SEAT_CAPACITY}석)`,
+        message: `SR 좌석 초과 — ${fmtTime(worst.at)} 기준 ${worst.count}명 (${SEAT_CAPACITY}석)`,
         sessionIds: alpha.map((s) => s.id),
       });
     }
