@@ -1,0 +1,168 @@
+@import "tailwindcss";
+
+/* ★ 디자인 토큰 — 색은 반드시 여기 토큰만 쓴다. 하드코딩 금지.
+   흰 배경 + 네이비 중심, 얇은 회색 테두리, 아주 약한 그림자, 둥근 모서리. */
+@theme {
+  --color-navy-50: #f5f7fb;
+  --color-navy-100: #e8edf7;
+  --color-navy-200: #cbd6ea;
+  --color-navy-300: #a3b4d6;
+  --color-navy-400: #7189bc;
+  --color-navy-500: #4c66a0;
+  --color-navy-600: #3a5088;
+  --color-navy-700: #2e4070;
+  --color-navy-800: #24325a;
+  --color-navy-900: #1b2545;
+  --color-navy-950: #111834;
+
+  --color-ink: #1f2a44;
+  --color-muted: #6b7a90;
+  --color-line: #e5e9f0;
+  --color-canvas: #f7f9fc;
+
+  --color-alert: #dc2626;
+  --color-alert-soft: #fef2f2;
+  --color-present: #2563eb;
+  --color-present-soft: #eff6ff;
+  --color-late: #d97706;
+  --color-late-soft: #fffbeb;
+  --color-srpink: #db2777;
+  --color-srpink-soft: #fdf2f8;
+
+  --font-sans:
+    Pretendard, "Pretendard Variable", -apple-system, BlinkMacSystemFont, "Malgun Gothic",
+    "맑은 고딕", system-ui, sans-serif;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-navy-200) transparent;
+}
+
+@layer components {
+  .card {
+    background: #fff;
+    border: 1px solid var(--color-line);
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 2px rgb(17 24 52 / 0.04);
+  }
+
+  .label {
+    display: block;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--color-muted);
+    margin-bottom: 0.375rem;
+  }
+
+  .field {
+    width: 100%;
+    border: 1px solid var(--color-line);
+    border-radius: 0.5rem;
+    background: #fff;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    color: var(--color-ink);
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .field:focus {
+    border-color: var(--color-navy-400);
+    box-shadow: 0 0 0 3px var(--color-navy-100);
+  }
+  .field:disabled {
+    background: var(--color-navy-50);
+    color: var(--color-muted);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--color-line);
+    background: #fff;
+    padding: 0.5rem 0.875rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-ink);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+    white-space: nowrap;
+  }
+  .btn:hover:not(:disabled) {
+    background: var(--color-navy-50);
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: var(--color-navy-800);
+    border-color: var(--color-navy-800);
+    color: #fff;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-navy-900);
+    border-color: var(--color-navy-900);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--color-muted);
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: var(--color-navy-50);
+    color: var(--color-ink);
+  }
+
+  .btn-danger {
+    background: #fff;
+    border-color: var(--color-alert);
+    color: var(--color-alert);
+  }
+  .btn-danger:hover:not(:disabled) {
+    background: var(--color-alert-soft);
+  }
+}
+
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.pop-in {
+  animation: popIn 0.18s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
