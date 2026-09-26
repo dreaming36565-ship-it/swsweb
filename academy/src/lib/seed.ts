@@ -1,124 +1,128 @@
 // 데모 데이터 시드 + 요일별 SR 재계산.
-// 실제 학생 정보가 아니라 연습용 데이터다 (반 7개 / 학생 35명).
+// 반·시간은 실제 학원의 2026 4분기 시간표를 옮긴 것이고,
+// 학생은 전부 가짜 이름이다 (실제 학생 정보를 코드에 남기지 않는다).
 
 import type { DatabaseSync } from "node:sqlite";
 import { toMin } from "./time";
 import { autoAssignSeats, type AlphaBlock } from "./sr";
 
-type Plan = [
-  className: string,
-  day: number,
-  start: string,
-  end: string,
-  alphaStart: string,
-  alphaEnd: string,
-  room: string,
-];
+/** 한 요일 묶음의 수업 시간. sr 이 있으면 그 시간에 SR룸을 쓴다. */
+type Slot = { days: number[]; start: string; end: string; sr?: [string, string] };
 
-const MON: Plan[] = [
-  ["5A1", 1, "14:40", "17:10", "17:10", "18:00", "1강"],
-  ["5B2", 1, "14:40", "17:10", "17:10", "18:00", "2강"],
-  ["중2A", 1, "17:20", "19:50", "16:20", "17:20", "4강"],
-  ["고1수학A", 1, "18:30", "21:00", "17:30", "18:30", "대강의실"],
-  ["고1영어A", 1, "18:30", "21:00", "17:30", "18:30", "3강"],
-];
-
-const TUE: Plan[] = [
-  ["6A1", 2, "15:00", "17:30", "17:30", "18:20", "3강"],
-  ["중2A", 2, "17:20", "19:50", "16:20", "17:20", "4강"],
-  ["고2수학B", 2, "18:30", "21:00", "17:30", "18:30", "대강의실"],
-];
-
-const SAT: Plan[] = [
-  ["6A1", 6, "10:00", "12:30", "12:30", "13:20", "3강"],
-  ["고2수학B", 6, "14:00", "16:30", "13:00", "14:00", "대강의실"],
-];
-
-const shift = (plans: Plan[], day: number): Plan[] =>
-  plans.map((p) => [p[0], day, p[2], p[3], p[4], p[5], p[6]] as Plan);
-
-const WEEK: Plan[] = [
-  ...MON,
-  ...TUE,
-  ...shift(MON, 3), // 수 = 월
-  ...shift(TUE, 4), // 목 = 화
-  ...shift(MON, 5), // 금 = 월
-  ...SAT,
-];
-
-const CLASSES: {
+type ClassDef = {
   name: string;
   dept: "ELEM" | "HIGH";
   teacher: string;
   room: string;
   grade: string;
   textbook: string;
-  students: string[];
-}[] = [
-  {
-    name: "5A1",
-    dept: "ELEM",
-    teacher: "nayoung",
-    room: "1강",
-    grade: "초5",
-    textbook: "개념원리 5-1",
-    students: ["김서준", "이하윤", "박도현", "최지우", "정예은"],
-  },
-  {
-    name: "5B2",
-    dept: "ELEM",
-    teacher: "jihoon",
-    room: "2강",
-    grade: "초5",
-    textbook: "쎈 5-2",
-    students: ["강민준", "윤서아", "임건우", "한지호", "오채원"],
-  },
-  {
-    name: "6A1",
-    dept: "ELEM",
-    teacher: "nayoung",
-    room: "3강",
-    grade: "초6",
-    textbook: "개념원리 6-1",
-    students: ["서지훈", "남다은", "백승우", "문가온", "조하람"],
-  },
-  {
-    name: "중2A",
-    dept: "ELEM",
-    teacher: "jihoon",
-    room: "4강",
-    grade: "중2",
-    textbook: "RPM 중2-1",
-    students: ["신유진", "권태윤", "황시현", "노아린", "배준서"],
-  },
-  {
-    name: "고1수학A",
-    dept: "HIGH",
-    teacher: "field",
-    room: "대강의실",
-    grade: "고1",
-    textbook: "수학의 정석 상",
-    students: ["이로빈", "강지완", "홍세아", "유하람", "전민재"],
-  },
-  {
-    name: "고1영어A",
-    dept: "HIGH",
-    teacher: "seoyeon",
-    room: "3강",
-    grade: "고1",
-    textbook: "능률 고1 리딩",
-    students: ["심우진", "곽나윤", "표준영", "성리아", "하도윤"],
-  },
-  {
-    name: "고2수학B",
-    dept: "HIGH",
-    teacher: "field",
-    room: "대강의실",
-    grade: "고2",
-    textbook: "쎈 수학2",
-    students: ["진서윤", "도경민", "방하늘", "예소민", "라시우"],
-  },
+  type: "REGULAR" | "INDIVIDUAL";
+  slots: Slot[];
+  /** 가짜 학생 수 (개별반은 정규반 학생을 나눠 넣으므로 0) */
+  size: number;
+};
+
+const MW = [1, 3]; // 월수
+const TT = [2, 4]; // 화목
+
+/** 정규반 — 4분기(9~11월) 시간표 기준. 시간은 "강의실 수업" 과 "SR 이용" 을 나눠 적었다. */
+const REGULAR: ClassDef[] = [
+  // 월수 — 초등
+  { name: "5A1", dept: "ELEM", teacher: "nayoung", room: "2강", grade: "초5", textbook: "6-1 심화", type: "REGULAR", size: 5,
+    slots: [{ days: MW, start: "14:40", end: "16:20", sr: ["16:20", "17:10"] }] },
+  { name: "5P1", dept: "ELEM", teacher: "yeseul", room: "1강", grade: "초5", textbook: "6-1 응용", type: "REGULAR", size: 3,
+    slots: [{ days: MW, start: "14:40", end: "16:20", sr: ["16:20", "17:10"] }] },
+  { name: "6S1", dept: "ELEM", teacher: "nayoung", room: "2강", grade: "초6", textbook: "2-1 데메테르", type: "REGULAR", size: 4,
+    slots: [{ days: MW, start: "16:20", end: "18:00", sr: ["15:30", "16:20"] }] },
+  { name: "초6피팅", dept: "ELEM", teacher: "yeseul", room: "1강", grade: "초6", textbook: "6학년 발전(대수)", type: "REGULAR", size: 4,
+    slots: [{ days: MW, start: "16:20", end: "18:00", sr: ["15:30", "16:20"] }] },
+  // 월수 — 중등
+  { name: "7S1", dept: "ELEM", teacher: "yeseul", room: "1강", grade: "중1", textbook: "공수1 입", type: "REGULAR", size: 5,
+    slots: [{ days: MW, start: "18:00", end: "19:40", sr: ["17:10", "18:00"] }] },
+  { name: "7A1", dept: "ELEM", teacher: "nayoung", room: "2강", grade: "중1", textbook: "3-1 아폴론", type: "REGULAR", size: 6,
+    slots: [{ days: MW, start: "18:00", end: "19:40", sr: ["17:10", "18:00"] }] },
+  { name: "8A1", dept: "ELEM", teacher: "yeseul", room: "1강", grade: "중2", textbook: "공통수학2(입)", type: "REGULAR", size: 6,
+    slots: [{ days: MW, start: "19:40", end: "21:30", sr: ["19:00", "19:40"] }] },
+  { name: "중등피팅", dept: "ELEM", teacher: "nayoung", room: "2강", grade: "중1", textbook: "3-1 아폴론", type: "REGULAR", size: 3,
+    slots: [{ days: MW, start: "19:40", end: "21:30", sr: ["19:00", "19:40"] }] },
+  { name: "9S1", dept: "ELEM", teacher: "field", room: "4강", grade: "중3", textbook: "대수 마플", type: "REGULAR", size: 4,
+    slots: [{ days: MW, start: "16:20", end: "18:00", sr: ["18:00", "18:50"] }] },
+  { name: "9A1", dept: "ELEM", teacher: "field", room: "4강", grade: "중3", textbook: "대수 쎈", type: "REGULAR", size: 4,
+    slots: [{ days: MW, start: "18:00", end: "19:40", sr: ["17:10", "18:00"] }] },
+  // 화목 — 초등
+  { name: "4A2", dept: "ELEM", teacher: "nayoung", room: "2강", grade: "초4", textbook: "5-2 실력", type: "REGULAR", size: 4,
+    slots: [{ days: TT, start: "14:40", end: "16:20", sr: ["16:20", "17:10"] }] },
+  { name: "초등피팅", dept: "ELEM", teacher: "yeseul", room: "1강", grade: "초4", textbook: "개별 진도", type: "REGULAR", size: 3,
+    slots: [{ days: TT, start: "14:40", end: "16:20", sr: ["16:20", "17:10"] }] },
+  { name: "6A2", dept: "ELEM", teacher: "yeseul", room: "1강", grade: "초6", textbook: "1-1 데메테르", type: "REGULAR", size: 6,
+    slots: [{ days: TT, start: "16:20", end: "18:00", sr: ["15:30", "16:20"] }] },
+  { name: "6P2", dept: "ELEM", teacher: "nayoung", room: "2강", grade: "초6", textbook: "1-1 아폴론(상)", type: "REGULAR", size: 5,
+    slots: [{ days: TT, start: "16:20", end: "18:00", sr: ["15:30", "16:20"] }] },
+  // 화목 — 중등
+  { name: "7A2", dept: "ELEM", teacher: "yeseul", room: "1강", grade: "중1", textbook: "2-2 아폴론", type: "REGULAR", size: 5,
+    slots: [{ days: TT, start: "18:00", end: "19:40", sr: ["17:10", "18:00"] }] },
+  { name: "7P2", dept: "ELEM", teacher: "nayoung", room: "2강", grade: "중1", textbook: "1-2 데메테르", type: "REGULAR", size: 4,
+    slots: [{ days: TT, start: "18:00", end: "19:40", sr: ["17:10", "18:00"] }] },
+  { name: "9A2", dept: "ELEM", teacher: "field", room: "4강", grade: "중3", textbook: "공수2 쎈", type: "REGULAR", size: 3,
+    slots: [{ days: TT, start: "18:00", end: "19:40", sr: ["17:10", "18:00"] }] },
+  // 고등부 — 대강의실 수업 + SR 자습을 번갈아 쓴다
+  { name: "H1S", dept: "HIGH", teacher: "field", room: "대강의실", grade: "고1", textbook: "고쟁이 3step", type: "REGULAR", size: 7,
+    slots: [
+      { days: [2], start: "20:10", end: "22:00", sr: ["18:00", "19:50"] },
+      { days: [5], start: "18:00", end: "19:50", sr: ["20:10", "22:00"] },
+    ] },
+  { name: "H3", dept: "HIGH", teacher: "field", room: "대강의실", grade: "고3", textbook: "미적분 · 모의고사", type: "REGULAR", size: 3,
+    slots: [{ days: [1, 4], start: "20:10", end: "22:00", sr: ["18:00", "19:50"] }] },
+  { name: "고등피팅", dept: "HIGH", teacher: "field", room: "대강의실", grade: "고1", textbook: "개별 진도", type: "REGULAR", size: 3,
+    slots: [{ days: [3, 5], start: "20:10", end: "22:00", sr: ["18:00", "19:50"] }] },
 ];
+
+/** 개별반 (금/토) — 정규반 학생들이 한 반씩 추가로 다닌다 */
+const INDIVIDUAL: ClassDef[] = [
+  ["개별 금1-2", "nayoung", "2강", 5, "14:40", "16:20", ["16:20", "17:10"]],
+  ["개별 금2-1", "yeseul", "1강", 5, "16:20", "18:00", ["18:00", "18:50"]],
+  ["개별 금2-2", "nayoung", "2강", 5, "16:20", "18:00", ["15:30", "16:20"]],
+  ["개별 금3-1", "yeseul", "1강", 5, "18:00", "19:40", ["17:10", "18:00"]],
+  ["개별 금3-2", "nayoung", "2강", 5, "18:00", "19:40", ["17:10", "18:00"]],
+  ["개별 금4-1", "yeseul", "1강", 5, "19:40", "21:20", ["19:00", "19:40"]],
+  ["개별 금4-2", "nayoung", "2강", 5, "19:40", "21:20", ["19:00", "19:40"]],
+  ["개별 토1-1", "yeseul", "1강", 6, "10:00", "11:40", ["11:40", "12:30"]],
+  ["개별 토1-2", "nayoung", "2강", 6, "10:00", "11:40", ["11:40", "12:30"]],
+  ["개별 토2-1", "yeseul", "1강", 6, "11:40", "13:20", ["10:50", "11:40"]],
+  ["개별 토2-2", "nayoung", "2강", 6, "11:40", "13:20", ["10:50", "11:40"]],
+  ["개별 토3-1", "yeseul", "1강", 6, "13:20", "15:00", ["12:30", "13:20"]],
+  ["개별 토3-2", "nayoung", "2강", 6, "13:20", "15:00", ["12:30", "13:20"]],
+].map(([name, teacher, room, day, start, end, sr]) => ({
+  name: name as string,
+  dept: "ELEM" as const,
+  teacher: teacher as string,
+  room: room as string,
+  grade: "개별",
+  textbook: "개인별 진도",
+  type: "INDIVIDUAL" as const,
+  slots: [{ days: [day as number], start: start as string, end: end as string, sr: sr as [string, string] }],
+  size: 0,
+}));
+
+const CLASSES: ClassDef[] = [...REGULAR, ...INDIVIDUAL];
+
+// 가짜 학생 이름 — 성 × 이름 조합으로 겹치지 않게 만든다
+const SURNAMES = "김이박최정강조윤장임한오서신권황안송류전홍고문양손배백허남심노하곽성차주우구민진나지엄채원천방공현함변염여추도소석선설마길연위표명기반".split("");
+const GIVEN = [
+  "서준", "하윤", "도현", "지우", "예은", "민준", "서아", "건우", "지호", "채원",
+  "시우", "다은", "승우", "가온", "하람", "유진", "태윤", "시현", "아린", "준서",
+  "로운", "세아", "하준", "민재", "우진", "나윤", "준영", "리아", "도윤", "서윤",
+  "경민", "하늘", "소민", "지안", "윤호", "수아", "현우", "지유", "은호", "예린",
+];
+function fakeNames(count: number): string[] {
+  const out = new Set<string>();
+  for (let i = 0; out.size < count; i++) {
+    const s = SURNAMES[i % SURNAMES.length];
+    const g = GIVEN[(i * 7 + Math.floor(i / SURNAMES.length)) % GIVEN.length];
+    out.add(s + g);
+  }
+  return [...out];
+}
 
 /** 해당 요일의 SR 좌석을 전부 지우고 자동배정으로 다시 계산한다. */
 export function rebuildSrForDay(db: DatabaseSync, day: number): void {
@@ -147,7 +151,8 @@ export function rebuildSrForDay(db: DatabaseSync, day: number): void {
   if (sessions.length === 0) return;
 
   const studentsOf = db.prepare(
-    "SELECT id FROM students WHERE class_id = ? AND active = 1 ORDER BY id",
+    `SELECT s.id FROM student_classes sc JOIN students s ON s.id = sc.student_id
+      WHERE sc.class_id = ? AND s.active = 1 ORDER BY s.id`,
   );
 
   const blocks: AlphaBlock[] = sessions.map((s) => ({
@@ -194,10 +199,9 @@ export function seedDemo(db: DatabaseSync): void {
   const users: Record<string, number> = {};
   const userDefs: [string, string, string, string][] = [
     ["admin", "김도현", "ADMIN", "ELEM"],
+    ["yeseul", "안예슬", "TEACHER", "ELEM"],
     ["nayoung", "최나영", "TEACHER", "ELEM"],
-    ["jihoon", "박지훈", "TEACHER", "ELEM"],
     ["field", "정필드", "TEACHER", "HIGH"],
-    ["seoyeon", "한서연", "TEACHER", "HIGH"],
     ["desk", "이수민", "DESK", "ELEM"],
   ];
   for (const [loginId, name, role, dept] of userDefs) {
@@ -205,41 +209,57 @@ export function seedDemo(db: DatabaseSync): void {
     users[loginId] = Number(r.lastInsertRowid);
   }
 
-  // 반 + 학생
+  // 반
   const classInsert = db.prepare(
     "INSERT INTO classes (name, department, teacher_id, room_id, grade, textbook) VALUES (?, ?, ?, ?, ?, ?)",
-  );
-  const studentInsert = db.prepare(
-    "INSERT INTO students (name, department, class_id, active) VALUES (?, ?, ?, 1)",
   );
   const classes: Record<string, number> = {};
   for (const c of CLASSES) {
     const r = classInsert.run(c.name, c.dept, users[c.teacher], rooms[c.room], c.grade, c.textbook);
-    const classId = Number(r.lastInsertRowid);
-    classes[c.name] = classId;
-    for (const s of c.students) studentInsert.run(s, c.dept, classId);
+    classes[c.name] = Number(r.lastInsertRowid);
+  }
+
+  // 학생 — 정규반에 넣고, 초중등부 학생은 개별반(금/토)에도 하나씩 나눠 넣는다
+  const studentInsert = db.prepare("INSERT INTO students (name, department, active) VALUES (?, ?, 1)");
+  const memberInsert = db.prepare("INSERT INTO student_classes (student_id, class_id) VALUES (?, ?)");
+  const names = fakeNames(REGULAR.reduce((n, c) => n + c.size, 0));
+  let nameIdx = 0;
+  let individualIdx = 0;
+  for (const c of REGULAR) {
+    for (let i = 0; i < c.size; i++) {
+      const r = studentInsert.run(names[nameIdx++], c.dept);
+      const studentId = Number(r.lastInsertRowid);
+      memberInsert.run(studentId, classes[c.name]);
+      if (c.dept === "ELEM") {
+        const ind = INDIVIDUAL[individualIdx++ % INDIVIDUAL.length];
+        memberInsert.run(studentId, classes[ind.name]);
+      }
+    }
   }
 
   // 주간 시간표
   const sessionInsert = db.prepare(
     `INSERT INTO timetable_sessions
       (day_of_week, class_id, type, start_min, end_min, alpha_start_min, alpha_end_min, room_id, alpha_room_id, teacher_id)
-     VALUES (?, ?, 'REGULAR', ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
-  for (const [className, day, start, end, aStart, aEnd, room] of WEEK) {
-    const def = CLASSES.find((c) => c.name === className);
-    if (!def) continue;
-    sessionInsert.run(
-      day,
-      classes[className],
-      toMin(start),
-      toMin(end),
-      toMin(aStart),
-      toMin(aEnd),
-      rooms[room],
-      rooms["SR룸"],
-      users[def.teacher],
-    );
+  for (const c of CLASSES) {
+    for (const slot of c.slots) {
+      for (const day of slot.days) {
+        sessionInsert.run(
+          day,
+          classes[c.name],
+          c.type,
+          toMin(slot.start),
+          toMin(slot.end),
+          slot.sr ? toMin(slot.sr[0]) : null,
+          slot.sr ? toMin(slot.sr[1]) : null,
+          rooms[c.room],
+          slot.sr ? rooms["SR룸"] : null,
+          users[c.teacher],
+        );
+      }
+    }
   }
 
   for (let day = 0; day <= 6; day++) rebuildSrForDay(db, day);

@@ -41,8 +41,14 @@ CREATE TABLE IF NOT EXISTS students (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   department TEXT NOT NULL,
-  class_id INTEGER REFERENCES classes(id) ON DELETE SET NULL,
   active INTEGER NOT NULL DEFAULT 1
+);
+
+-- 학생 ↔ 반 (다대다). 한 학생이 정규반 + 개별반을 함께 다닌다.
+CREATE TABLE IF NOT EXISTS student_classes (
+  student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  PRIMARY KEY (student_id, class_id)
 );
 
 CREATE TABLE IF NOT EXISTS timetable_sessions (
@@ -140,7 +146,7 @@ CREATE INDEX IF NOT EXISTS idx_makeups_date ON makeups(date);
 CREATE INDEX IF NOT EXISTS idx_makeups_absence ON makeups(student_id, absent_date);
 CREATE INDEX IF NOT EXISTS idx_sessions_day ON timetable_sessions(day_of_week);
 CREATE INDEX IF NOT EXISTS idx_sr_day ON sr_assignments(day_of_week);
-CREATE INDEX IF NOT EXISTS idx_students_class ON students(class_id);
+CREATE INDEX IF NOT EXISTS idx_student_classes_class ON student_classes(class_id);
 CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id);
 `;
 

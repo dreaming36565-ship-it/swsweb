@@ -2,8 +2,10 @@
 
 // 반 관리 — 상단 가로 폼(새 반 만들기) + 넓은 표(인라인 수정/삭제) + 오른쪽 학생 명단.
 // 학생은 이름·소속 반만 관리한다(연락처·학교 없음). 학년·사용교재는 반이 갖는다.
+// 한 학생이 여러 반(정규반 + 개별반)에 속할 수 있다.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Combobox, { type ComboValue } from "../Combobox";
 import { useConfirm } from "../ConfirmDialog";
 import { IconPencil, IconPlus, IconTrash } from "../Icons";
 import { apiDelete, apiGet, apiPatch, apiPost, errorMessage } from "@/lib/http";
@@ -45,7 +47,7 @@ export default function ClassesClient({ user }: { user: SessionUser }) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<Draft>(emptyDraft(user.department));
   const [selectedClassId, setSelectedClassId] = useState<number | null>(null);
-  const [newStudent, setNewStudent] = useState("");
+  const [newStudent, setNewStudent] = useState<ComboValue>({ id: null, name: "" });
   const [editStudentId, setEditStudentId] = useState<number | null>(null);
   const [editStudentName, setEditStudentName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -70,8 +72,17 @@ export default function ClassesClient({ user }: { user: SessionUser }) {
   const classes = data?.classes ?? [];
   const rooms = data?.rooms ?? [];
   const teachers = data?.teachers ?? [];
-  const students = (data?.students ?? []).filter((s) => s.classId === selectedClassId);
+  const allStudents = useMemo(() => data?.students ?? [], [data]);
+  const students = allStudents.filter((s) => selectedClassId !== null && s.classIds.includes(selectedClassId));
   const selectedClass = classes.find((c) => c.id === selectedClassId) ?? null;
+  // 이 반에 아직 없는 학생 — 다른 반 학생을 이 반에도 넣을 때 고른다
+  const addableOptions = useMemo(
+    () =>
+      allStudents
+        .filter((s) => selectedClassId === null || !s.classIds.includes(selectedClassId))
+        .map((s) => ({ id: s.id, label: s.name, hint: s.classNames.join(" · ") || "소속 반 없음" })),
+    [allStudents, selectedClassId],
+  );
 
   const run = async (fn: () => Promise<unknown>) => {
     setError(null);
@@ -115,21 +126,43 @@ export default function ClassesClient({ user }: { user: SessionUser }) {
     if (yes) void run(() => apiDelete("/api/classes", { id: c.id }));
   };
 
-  const addStudent = () =>
-    run(async () => {
-      await apiPost("/api/students", {
-        name: newStudent,
-        department: selectedClass?.department ?? user.department,
-        classId: selectedClassId,
-      });
-      setNewStudent("");
+  const addStudent = () => {
+    if (!newStudent.name.trim() || selectedClassId === null) return;
+    return run(async () => {
+      if (newStudent.id) {
+        // 기존 학생을 이 반에도 추가
+        await apiPost("/api/students", { studentId: newStudent.id, classId: selectedClassId });
+      } else {
+        await apiPost("/api/students", {
+          name: newStudent.name,
+          department: selectedClass?.department ?? user.department,
+          classIds: [selectedClassId],
+        });
+      }
+      setNewStudent({ id: null, name: "" });
     });
+  };
+
+  const removeFromClass = async (s: Student) => {
+    if (!selectedClass) return;
+    const others = s.classNames.filter((n) => n !== selectedClass.name);
+    const yes = await confirm({
+      title: "이 반에서 뺄까요?",
+      message:
+        others.length > 0
+          ? `${s.name} 학생을 ${selectedClass.name} 반에서만 뺍니다. ${others.join(", ")} 소속은 그대로 남습니다.`
+          : `${s.name} 학생을 ${selectedClass.name} 반에서 뺍니다. 학생 정보는 "소속 반 없음"으로 남습니다.`,
+      confirmText: "반에서 빼기",
+      danger: true,
+    });
+    if (yes) void run(() => apiDelete("/api/students", { id: s.id, classId: selectedClass.id }));
+  };
 
   const removeStudent = async (s: Student) => {
     const yes = await confirm({
-      title: "학생을 삭제할까요?",
-      message: `${s.name} 학생을 명단에서 지웁니다. 해당 요일의 SR 자리도 다시 계산됩니다.`,
-      confirmText: "삭제",
+      title: "학생을 완전히 삭제할까요?",
+      message: `${s.name} 학생을 모든 반(${s.classNames.join(", ") || "없음"})에서 지우고 기록도 삭제합니다. 해당 요일의 SR 자리도 다시 계산됩니다.`,
+      confirmText: "완전 삭제",
       danger: true,
     });
     if (yes) void run(() => apiDelete("/api/students", { id: s.id }));
@@ -419,20 +452,37 @@ export default function ClassesClient({ user }: { user: SessionUser }) {
           ) : (
             <>
               {canEditStudent ? (
-                <div className="mt-4 flex gap-2">
-                  <input
-                    className="field"
-                    placeholder="학생 이름"
-                    value={newStudent}
-                    onChange={(e) => setNewStudent(e.target.value)}
+                <>
+                  <div
+                    className="mt-4 flex gap-2"
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && newStudent.trim()) void addStudent();
+                      if (e.key === "Enter" && newStudent.name.trim()) void addStudent();
                     }}
-                  />
-                  <button type="button" className="btn btn-primary px-3" onClick={() => void addStudent()} disabled={busy}>
-                    <IconPlus className="h-4 w-4" />
-                  </button>
-                </div>
+                  >
+                    <div className="min-w-0 flex-1">
+                      <Combobox
+                        options={addableOptions}
+                        value={newStudent}
+                        onChange={setNewStudent}
+                        placeholder="학생 이름 (검색 또는 새로 입력)"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-primary px-3"
+                      onClick={() => void addStudent()}
+                      disabled={busy || !newStudent.name.trim()}
+                      aria-label="추가"
+                    >
+                      <IconPlus className="h-4 w-4" />
+                    </button>
+                  </div>
+                  <p className="mt-1.5 text-xs text-muted">
+                    {newStudent.id
+                      ? "다른 반에 다니는 학생을 이 반에도 추가합니다."
+                      : "목록에서 고르면 기존 학생을 추가하고, 새 이름을 입력하면 새 학생으로 등록합니다."}
+                  </p>
+                </>
               ) : null}
 
               <div className="mt-4 space-y-1">
@@ -466,9 +516,25 @@ export default function ClassesClient({ user }: { user: SessionUser }) {
                         </>
                       ) : (
                         <>
-                          <span className="text-sm text-ink">{s.name}</span>
+                          <span className="min-w-0">
+                            <span className="text-sm text-ink">{s.name}</span>
+                            {s.classNames.filter((n) => n !== selectedClass.name).length > 0 ? (
+                              <span className="mt-0.5 flex flex-wrap gap-1">
+                                {s.classNames
+                                  .filter((n) => n !== selectedClass.name)
+                                  .map((n) => (
+                                    <span
+                                      key={n}
+                                      className="rounded bg-navy-50 px-1.5 py-0.5 text-[11px] font-medium text-navy-700"
+                                    >
+                                      {n}
+                                    </span>
+                                  ))}
+                              </span>
+                            ) : null}
+                          </span>
                           {canEditStudent ? (
-                            <span className="flex gap-1">
+                            <span className="flex shrink-0 gap-1">
                               <button
                                 type="button"
                                 className="btn btn-ghost px-1.5 py-1"
@@ -482,9 +548,18 @@ export default function ClassesClient({ user }: { user: SessionUser }) {
                               </button>
                               <button
                                 type="button"
+                                className="btn btn-ghost px-1.5 py-1 text-xs text-muted"
+                                onClick={() => void removeFromClass(s)}
+                                title="이 반에서만 빼기"
+                              >
+                                빼기
+                              </button>
+                              <button
+                                type="button"
                                 className="btn btn-ghost px-1.5 py-1 text-alert"
                                 onClick={() => void removeStudent(s)}
-                                aria-label="삭제"
+                                aria-label="완전 삭제"
+                                title="학생 완전 삭제"
                               >
                                 <IconTrash className="h-3.5 w-3.5" />
                               </button>

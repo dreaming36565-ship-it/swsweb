@@ -10,6 +10,7 @@ const REMEMBER_KEY = "academy.login.remember";
 
 const DEMO = [
   { loginId: "admin", label: "관리자 김도현" },
+  { loginId: "yeseul", label: "초중등 안예슬" },
   { loginId: "nayoung", label: "초중등 최나영" },
   { loginId: "field", label: "고등 정필드" },
   { loginId: "desk", label: "데스크 이수민" },

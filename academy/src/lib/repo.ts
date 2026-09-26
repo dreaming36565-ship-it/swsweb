@@ -198,7 +198,8 @@ export function listClasses(dept: DeptFilter = "ALL"): ClassRow[] {
       .prepare(
         `SELECT c.id, c.name, c.department, c.teacher_id AS teacherId, u.name AS teacherName,
                 c.room_id AS roomId, r.name AS roomName, c.grade, c.textbook,
-                (SELECT COUNT(*) FROM students s WHERE s.class_id = c.id AND s.active = 1) AS studentCount
+                (SELECT COUNT(*) FROM student_classes sc JOIN students s ON s.id = sc.student_id
+                  WHERE sc.class_id = c.id AND s.active = 1) AS studentCount
            FROM classes c
            LEFT JOIN users u ON u.id = c.teacher_id
            LEFT JOIN rooms r ON r.id = c.room_id
@@ -273,7 +274,9 @@ export function updateClass(
   }
   if (input.department !== undefined) {
     db.prepare("UPDATE classes SET department = ? WHERE id = ?").run(input.department, id);
-    db.prepare("UPDATE students SET department = ? WHERE class_id = ?").run(input.department, id);
+    db.prepare(
+      "UPDATE students SET department = ? WHERE id IN (SELECT student_id FROM student_classes WHERE class_id = ?)",
+    ).run(input.department, id);
   }
   if (input.teacherId !== undefined)
     db.prepare("UPDATE classes SET teacher_id = ? WHERE id = ?").run(input.teacherId ?? null, id);
@@ -300,40 +303,71 @@ export function listStudents(dept: DeptFilter = "ALL", classId?: number | null):
   const db = getDb();
   const w = deptWhere("s.department", dept);
   const args: (string | number)[] = [...w.args];
-  let sql = `SELECT s.id, s.name, s.department, s.class_id AS classId, c.name AS className, s.active
-               FROM students s LEFT JOIN classes c ON c.id = s.class_id
+  let sql = `SELECT s.id, s.name, s.department, s.active
+               FROM students s
               WHERE s.active = 1${w.sql}`;
   if (classId) {
-    sql += " AND s.class_id = ?";
+    sql += " AND EXISTS (SELECT 1 FROM student_classes sc WHERE sc.student_id = s.id AND sc.class_id = ?)";
     args.push(classId);
   }
-  sql += " ORDER BY c.name, s.id";
-  return rows<Student>(db.prepare(sql).all(...args));
+  sql += " ORDER BY s.name, s.id";
+  const list = rows<Omit<Student, "classIds" | "classNames">>(db.prepare(sql).all(...args));
+
+  // 소속 반은 따로 모아서 붙인다 (정규반 먼저, 개별반 나중 — 이름순)
+  const memberships = rows<{ student_id: number; class_id: number; class_name: string }>(
+    db
+      .prepare(
+        `SELECT sc.student_id, sc.class_id, c.name AS class_name
+           FROM student_classes sc JOIN classes c ON c.id = sc.class_id
+          ORDER BY c.name`,
+      )
+      .all(),
+  );
+  const byStudent = new Map<number, { ids: number[]; names: string[] }>();
+  for (const m of memberships) {
+    const cur = byStudent.get(m.student_id) ?? { ids: [], names: [] };
+    cur.ids.push(m.class_id);
+    cur.names.push(m.class_name);
+    byStudent.set(m.student_id, cur);
+  }
+  return list.map((s) => ({
+    ...s,
+    classIds: byStudent.get(s.id)?.ids ?? [],
+    classNames: byStudent.get(s.id)?.names ?? [],
+  }));
+}
+
+function classIdsOf(studentId: number): number[] {
+  return rows<{ class_id: number }>(
+    getDb().prepare("SELECT class_id FROM student_classes WHERE student_id = ?").all(studentId),
+  ).map((r) => r.class_id);
 }
 
 export function createStudent(input: {
   name: string;
   department: string;
-  classId?: number | null;
+  classIds?: number[];
 }): number {
   const name = input.name.trim();
   assert(name, "학생 이름을 입력해 주세요.");
   const db = getDb();
   const r = db
-    .prepare("INSERT INTO students (name, department, class_id, active) VALUES (?, ?, ?, 1)")
-    .run(name, input.department, input.classId ?? null);
-  rebuildSrForClass(input.classId ?? null);
-  return Number(r.lastInsertRowid);
+    .prepare("INSERT INTO students (name, department, active) VALUES (?, ?, 1)")
+    .run(name, input.department);
+  const id = Number(r.lastInsertRowid);
+  const classIds = input.classIds ?? [];
+  const ins = db.prepare("INSERT OR IGNORE INTO student_classes (student_id, class_id) VALUES (?, ?)");
+  for (const c of classIds) ins.run(id, c);
+  rebuildSrForClasses(classIds);
+  return id;
 }
 
 export function updateStudent(
   id: number,
-  input: { name?: string; classId?: number | null; department?: string },
+  input: { name?: string; department?: string },
 ): void {
   const db = getDb();
-  const cur = row<{ class_id: number | null }>(
-    db.prepare("SELECT class_id FROM students WHERE id = ?").get(id),
-  );
+  const cur = row<{ id: number }>(db.prepare("SELECT id FROM students WHERE id = ?").get(id));
   assert(cur, "학생을 찾을 수 없습니다.");
   if (input.name !== undefined) {
     assert(input.name.trim(), "학생 이름을 입력해 주세요.");
@@ -341,30 +375,50 @@ export function updateStudent(
   }
   if (input.department !== undefined)
     db.prepare("UPDATE students SET department = ? WHERE id = ?").run(input.department, id);
-  if (input.classId !== undefined) {
-    db.prepare("UPDATE students SET class_id = ? WHERE id = ?").run(input.classId ?? null, id);
-    rebuildSrForClass(cur.class_id);
-    rebuildSrForClass(input.classId ?? null);
-  }
+}
+
+/** 기존 학생을 다른 반에도 넣는다 (예: 정규반 학생을 개별반에 추가) */
+export function addStudentToClass(studentId: number, classId: number): void {
+  const db = getDb();
+  const st = row<{ id: number }>(db.prepare("SELECT id FROM students WHERE id = ?").get(studentId));
+  assert(st, "학생을 찾을 수 없습니다.");
+  const cls = row<{ id: number }>(db.prepare("SELECT id FROM classes WHERE id = ?").get(classId));
+  assert(cls, "반을 찾을 수 없습니다.");
+  const dup = row<{ n: number }>(
+    db
+      .prepare("SELECT COUNT(*) AS n FROM student_classes WHERE student_id = ? AND class_id = ?")
+      .get(studentId, classId),
+  );
+  assert((dup?.n ?? 0) === 0, "이미 이 반에 있는 학생입니다.");
+  db.prepare("INSERT INTO student_classes (student_id, class_id) VALUES (?, ?)").run(studentId, classId);
+  rebuildSrForClasses([classId]);
+}
+
+/** 이 반에서만 뺀다. 다른 반 소속과 학생 정보는 그대로 남는다. */
+export function removeStudentFromClass(studentId: number, classId: number): void {
+  getDb()
+    .prepare("DELETE FROM student_classes WHERE student_id = ? AND class_id = ?")
+    .run(studentId, classId);
+  rebuildSrForClasses([classId]);
 }
 
 export function deleteStudent(id: number): void {
   const db = getDb();
-  const cur = row<{ class_id: number | null }>(
-    db.prepare("SELECT class_id FROM students WHERE id = ?").get(id),
-  );
+  const classIds = classIdsOf(id);
   db.prepare("DELETE FROM students WHERE id = ?").run(id);
-  rebuildSrForClass(cur?.class_id ?? null);
+  rebuildSrForClasses(classIds);
 }
 
-/** 반이 수업하는 모든 요일의 SR 을 다시 계산한다 (수동 이동은 초기화된다 — 의도된 동작) */
-function rebuildSrForClass(classId: number | null): void {
-  if (!classId) return;
+/** 반들이 수업하는 모든 요일의 SR 을 다시 계산한다 (수동 이동은 초기화된다 — 의도된 동작) */
+function rebuildSrForClasses(classIds: number[]): void {
+  if (classIds.length === 0) return;
   const db = getDb();
-  const days = rows<{ day_of_week: number }>(
-    db.prepare("SELECT DISTINCT day_of_week FROM timetable_sessions WHERE class_id = ?").all(classId),
-  );
-  for (const d of days) rebuildSrForDay(db, d.day_of_week);
+  const days = new Set<number>();
+  const stmt = db.prepare("SELECT DISTINCT day_of_week FROM timetable_sessions WHERE class_id = ?");
+  for (const c of classIds) {
+    for (const d of rows<{ day_of_week: number }>(stmt.all(c))) days.add(d.day_of_week);
+  }
+  for (const d of days) rebuildSrForDay(db, d);
 }
 
 /* ------------------------------------------------------------------ 시간표 */
@@ -376,7 +430,8 @@ function sessionSelect(): string {
                  s.room_id AS roomId, r.name AS roomName,
                  s.alpha_room_id AS alphaRoomId, ar.name AS alphaRoomName,
                  s.teacher_id AS teacherId, u.name AS teacherName,
-                 (SELECT COUNT(*) FROM students st WHERE st.class_id = c.id AND st.active = 1) AS studentCount
+                 (SELECT COUNT(*) FROM student_classes sc JOIN students st ON st.id = sc.student_id
+                   WHERE sc.class_id = c.id AND st.active = 1) AS studentCount
             FROM timetable_sessions s
             JOIN classes c ON c.id = s.class_id
             LEFT JOIN rooms r ON r.id = s.room_id
@@ -394,12 +449,16 @@ export function listSessions(day: number, dept: DeptFilter = "ALL"): TimetableSe
 }
 
 function studentIdsByClass(): Map<number, number[]> {
-  const all = rows<{ id: number; class_id: number | null }>(
-    getDb().prepare("SELECT id, class_id FROM students WHERE active = 1").all(),
+  const all = rows<{ id: number; class_id: number }>(
+    getDb()
+      .prepare(
+        `SELECT s.id, sc.class_id FROM student_classes sc
+           JOIN students s ON s.id = sc.student_id WHERE s.active = 1`,
+      )
+      .all(),
   );
   const map = new Map<number, number[]>();
   for (const s of all) {
-    if (s.class_id === null) continue;
     const list = map.get(s.class_id) ?? [];
     list.push(s.id);
     map.set(s.class_id, list);
@@ -643,7 +702,12 @@ function openEvent(sessionId: number, date: string): number | null {
   const eventId = Number(r.lastInsertRowid);
 
   const students = rows<{ id: number }>(
-    db.prepare("SELECT id FROM students WHERE class_id = ? AND active = 1 ORDER BY id").all(s.class_id),
+    db
+      .prepare(
+        `SELECT s.id FROM student_classes sc JOIN students s ON s.id = sc.student_id
+          WHERE sc.class_id = ? AND s.active = 1 ORDER BY s.id`,
+      )
+      .all(s.class_id),
   );
   const ins = db.prepare(
     "INSERT INTO attendance_records (event_id, student_id, status) VALUES (?, ?, 'UNCHECKED')",

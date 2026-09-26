@@ -19,7 +19,8 @@ export const GET = withUser(({ req }) => {
     classes: listClasses(dept),
     rooms: listRooms(),
     teachers: listTeachers("ALL"),
-    students: listStudents(dept),
+    // 다른 부서 학생도 개별반에 넣을 수 있도록 학생은 전체를 내려준다
+    students: listStudents("ALL"),
   };
 });
 

@@ -95,12 +95,13 @@ export type ClassRow = {
   studentCount: number;
 };
 
+/** 학생은 여러 반에 동시에 속할 수 있다 (정규반 + 개별반) */
 export type Student = {
   id: number;
   name: string;
   department: Department;
-  classId: number | null;
-  className: string | null;
+  classIds: number[];
+  classNames: string[];
   active: 0 | 1;
 };
 

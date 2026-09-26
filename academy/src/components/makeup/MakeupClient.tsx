@@ -85,7 +85,7 @@ export default function MakeupClient({ user }: { user: SessionUser }) {
   const summary = data?.summary;
 
   const studentOptions = useMemo(
-    () => students.map((s) => ({ id: s.id, label: s.name, hint: s.className ?? undefined })),
+    () => students.map((s) => ({ id: s.id, label: s.name, hint: s.classNames.join(" · ") || undefined })),
     [students],
   );
 
@@ -368,7 +368,7 @@ export default function MakeupClient({ user }: { user: SessionUser }) {
                 placeholder="학생 이름 검색"
                 onChange={(v) => {
                   const st = students.find((s) => s.id === v.id);
-                  setForm({ ...form, student: v, classId: st?.classId ?? form.classId });
+                  setForm({ ...form, student: v, classId: st?.classIds[0] ?? form.classId });
                 }}
               />
             </div>
