@@ -9,7 +9,7 @@ import TimeSelect from "../TimeSelect";
 import { useConfirm } from "../ConfirmDialog";
 import { IconTrash, IconWarning } from "../Icons";
 import { apiDelete, apiGet, apiPatch, apiPost, errorMessage } from "@/lib/http";
-import { classColor } from "@/lib/colors";
+import { classColor, classColorMap } from "@/lib/colors";
 import { DAY_LABELS, STEP, fmtTime, formatDateShort, parseDateKey, rangeLabel } from "@/lib/time";
 import {
   SESSION_TYPE_LABEL,
@@ -27,6 +27,7 @@ import {
 type Payload = {
   day: number;
   sessions: TimetableSession[];
+  dayClassIds: number[];
   rooms: Room[];
   classes: ClassRow[];
   teachers: { id: number; name: string; department: Department }[];
@@ -131,12 +132,15 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
     return map;
   }, [dayMakeups]);
 
+  // 같은 요일 안에서 반마다 다른 색 — 수업·알파 블록은 같은 반이면 같은 색
+  const colors = useMemo(() => classColorMap(data?.dayClassIds ?? []), [data]);
+
   const blocksByRoom = useMemo(() => {
-    const map = new Map<number, { key: string; session: TimetableSession; start: number; end: number; isAlpha: boolean }[]>();
+    const map = new Map<number, { key: string; session: TimetableSession; start: number; end: number; isAlpha: boolean; lane: number; lanes: number }[]>();
     for (const s of sessions) {
       if (s.roomId !== null) {
         const list = map.get(s.roomId) ?? [];
-        list.push({ key: `c${s.id}`, session: s, start: s.startMin, end: s.endMin, isAlpha: false });
+        list.push({ key: `c${s.id}`, session: s, start: s.startMin, end: s.endMin, isAlpha: false, lane: 0, lanes: 1 });
         map.set(s.roomId, list);
       }
       if (s.alphaRoomId !== null && s.alphaStartMin !== null && s.alphaEndMin !== null) {
@@ -147,8 +151,25 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
           start: s.alphaStartMin,
           end: s.alphaEndMin,
           isAlpha: true,
+          lane: 0,
+          lanes: 1,
         });
         map.set(s.alphaRoomId, list);
+      }
+    }
+    // SR룸처럼 여러 반이 같은 시간에 함께 쓰는 칸은 블록이 겹치지 않게 나란히 놓는다
+    for (const list of map.values()) {
+      list.sort((a, b) => a.start - b.start || a.session.classId - b.session.classId);
+      const laneEnds: number[] = [];
+      for (const b of list) {
+        let lane = laneEnds.findIndex((end) => end <= b.start);
+        if (lane === -1) lane = laneEnds.length;
+        laneEnds[lane] = b.end;
+        b.lane = lane;
+      }
+      for (const b of list) {
+        const overlapping = list.filter((o) => o.start < b.end && b.start < o.end);
+        b.lanes = Math.max(...overlapping.map((o) => o.lane)) + 1;
       }
     }
     return map;
@@ -509,7 +530,7 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
           </div>
 
           <div className="overflow-auto">
-            <div className="flex min-w-[720px]">
+            <div className="flex w-max min-w-full">
               {/* 시간 눈금 */}
               <div className="w-24 shrink-0 border-r border-line">
                 <div className="h-9 border-b border-line" />
@@ -534,7 +555,15 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
 
               {/* 강의실 열 */}
               {rooms.map((room) => (
-                <div key={room.id} className="min-w-[120px] flex-1 border-r border-line last:border-r-0">
+                <div
+                  key={room.id}
+                  className="flex-1 border-r border-line last:border-r-0"
+                  // 여러 반이 나란히 들어가는 칸(SR룸)은 반 수만큼 넓힌다
+                  style={{
+                    minWidth: 120 * Math.max(1, ...(blocksByRoom.get(room.id) ?? []).map((b) => b.lanes)),
+                    flexGrow: Math.max(1, ...(blocksByRoom.get(room.id) ?? []).map((b) => b.lanes)),
+                  }}
+                >
                   <div className="flex h-9 items-center justify-center border-b border-line text-sm font-bold text-navy-800">
                     {room.name}
                   </div>
@@ -550,22 +579,25 @@ export default function TimetableClient({ user }: { user: SessionUser }) {
                     ))}
 
                     {(blocksByRoom.get(room.id) ?? []).map((b) => {
-                      const color = classColor(b.session.classId);
+                      const color = colors.get(b.session.classId) ?? classColor(b.session.classId);
                       const top = ((b.start - gridStart) / STEP) * ROW_H;
                       const height = Math.max(ROW_H, ((b.end - b.start) / STEP) * ROW_H);
                       const bad = conflictIds.has(b.session.id);
+                      const width = 100 / b.lanes;
                       return (
                         <button
                           key={b.key}
                           type="button"
                           onClick={() => startEdit(b.session)}
-                          className={`absolute left-1 right-1 overflow-hidden rounded-md border px-2 py-1 text-left transition-shadow ${
+                          className={`absolute overflow-hidden rounded-md border px-2 py-1 text-left transition-shadow ${
                             canEdit ? "hover:shadow-md" : "cursor-default"
-                          } ${bad ? "ring-2 ring-alert" : ""}`}
+                          } ${b.isAlpha ? "border-dashed" : ""} ${bad ? "ring-2 ring-alert" : ""}`}
                           style={{
                             top,
                             height,
-                            background: b.isAlpha ? "#fff" : color.bg,
+                            left: `calc(${b.lane * width}% + 4px)`,
+                            width: `calc(${width}% - 8px)`,
+                            background: color.bg,
                             borderColor: color.border,
                             color: color.text,
                           }}

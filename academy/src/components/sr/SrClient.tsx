@@ -7,12 +7,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import TimeSelect from "../TimeSelect";
 import { useConfirm } from "../ConfirmDialog";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
-import { classColor } from "@/lib/colors";
+import { classColor, classColorMap } from "@/lib/colors";
 import { SEAT_COLS, SEAT_ROWS, occupantAt, type SeatUse } from "@/lib/sr";
 import { DAY_END, DAY_LABELS, DAY_START, STEP, minutesOfDay, rangeLabel } from "@/lib/time";
 import type { Department, SessionUser, SrAssignment, TimetableSession } from "@/lib/types";
 
-type Payload = { day: number; assignments: SrAssignment[]; sessions: TimetableSession[] };
+type Payload = { day: number; assignments: SrAssignment[]; sessions: TimetableSession[]; dayClassIds: number[] };
 
 export default function SrClient({ user }: { user: SessionUser }) {
   const confirm = useConfirm();
@@ -45,6 +45,8 @@ export default function SrClient({ user }: { user: SessionUser }) {
   }, [load]);
 
   const assignments = useMemo(() => data?.assignments ?? [], [data]);
+  // 시간표 화면과 같은 반 색
+  const colors = useMemo(() => classColorMap(data?.dayClassIds ?? []), [data]);
 
   const seatUses: SeatUse[] = useMemo(
     () =>
@@ -188,7 +190,9 @@ export default function SrClient({ user }: { user: SessionUser }) {
                   {Array.from({ length: SEAT_ROWS }, (_, i) => {
                     const seat = `${col}${i + 1}`;
                     const { assignment, isSelf, isMovable } = seatInfo(seat);
-                    const color = assignment ? classColor(assignment.classId) : null;
+                    const color = assignment
+                      ? (colors.get(assignment.classId) ?? classColor(assignment.classId))
+                      : null;
 
                     let cls = "border-line bg-navy-100 text-muted";
                     let style: React.CSSProperties = {};

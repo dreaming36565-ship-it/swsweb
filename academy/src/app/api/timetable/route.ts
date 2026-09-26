@@ -19,6 +19,8 @@ export const GET = withUser(({ req }) => {
     day,
     dept,
     sessions: listSessions(day, dept),
+    // 반 색은 부서 필터와 상관없이 그 요일 전체 반 기준으로 정한다 (SR 화면과 같은 색)
+    dayClassIds: listSessions(day, "ALL").map((s) => s.classId),
     rooms: listRooms(),
     classes: listClasses(dept),
     teachers: listTeachers("ALL"),
