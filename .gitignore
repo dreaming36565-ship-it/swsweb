@@ -10,3 +10,8 @@ data/
 Thumbs.db
 next-env.d.ts
 .env*.local
+
+# 실제 학생 정보가 담긴 원본 시트 — 저장소에 올리지 않는다
+*.xlsx
+*.xls
+*.csv
