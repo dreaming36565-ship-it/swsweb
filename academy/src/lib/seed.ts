@@ -1,7 +1,10 @@
 // 데모 데이터 시드 + 요일별 SR 재계산.
-// 반·시간은 실제 학원의 2026 4분기 시간표를 옮긴 것이고,
-// 학생은 전부 가짜 이름이다 (실제 학생 정보를 코드에 남기지 않는다).
+// 반·시간은 실제 학원의 2026 4분기 시간표를 옮긴 것이다.
+// 학생 이름은 코드에 남기지 않는다 — 이 컴퓨터의 data/roster.local.json(깃허브 제외)이 있으면
+// 그 실제 명단을 쓰고, 없으면 가짜 이름을 만든다.
 
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { toMin } from "./time";
 import { autoAssignSeats, type AlphaBlock } from "./sr";
@@ -12,11 +15,13 @@ type Slot = { days: number[]; start: string; end: string; sr?: [string, string] 
 type ClassDef = {
   name: string;
   dept: "ELEM" | "HIGH";
+  /** 담당 선생님 아이디. 빈 문자열이면 담당 없음 */
   teacher: string;
   room: string;
   grade: string;
   textbook: string;
-  type: "REGULAR" | "INDIVIDUAL";
+  /** REVIEW = 고등 누적오답, HOMEWORK = 숙제반 — 둘 다 수업 없이 SR만 쓴다 */
+  type: "REGULAR" | "INDIVIDUAL" | "REVIEW" | "HOMEWORK";
   slots: Slot[];
   /** 가짜 학생 수 (개별반은 정규반 학생을 나눠 넣으므로 0) */
   size: number;
@@ -34,7 +39,7 @@ const REGULAR: ClassDef[] = [
     slots: [{ days: MW, start: "14:40", end: "16:20", sr: ["16:20", "17:10"] }] },
   { name: "6S1", dept: "ELEM", teacher: "nayoung", room: "2강", grade: "초6", textbook: "2-1 데메테르", type: "REGULAR", size: 4,
     slots: [{ days: MW, start: "16:20", end: "18:00", sr: ["15:30", "16:20"] }] },
-  { name: "초6피팅", dept: "ELEM", teacher: "yeseul", room: "1강", grade: "초6", textbook: "6학년 발전(대수)", type: "REGULAR", size: 4,
+  { name: "초6피팅", dept: "ELEM", teacher: "yeseul", room: "1강", grade: "초등피팅", textbook: "6학년 발전(대수)", type: "REGULAR", size: 4,
     slots: [{ days: MW, start: "16:20", end: "18:00", sr: ["15:30", "16:20"] }] },
   // 월수 — 중등
   { name: "7S1", dept: "ELEM", teacher: "yeseul", room: "1강", grade: "중1", textbook: "공수1 입", type: "REGULAR", size: 5,
@@ -42,9 +47,9 @@ const REGULAR: ClassDef[] = [
   { name: "7A1", dept: "ELEM", teacher: "nayoung", room: "2강", grade: "중1", textbook: "3-1 아폴론", type: "REGULAR", size: 6,
     slots: [{ days: MW, start: "18:00", end: "19:40", sr: ["17:10", "18:00"] }] },
   { name: "8A1", dept: "ELEM", teacher: "yeseul", room: "1강", grade: "중2", textbook: "공통수학2(입)", type: "REGULAR", size: 6,
-    slots: [{ days: MW, start: "19:40", end: "21:30", sr: ["19:00", "19:40"] }] },
-  { name: "중등피팅", dept: "ELEM", teacher: "nayoung", room: "2강", grade: "중1", textbook: "3-1 아폴론", type: "REGULAR", size: 3,
-    slots: [{ days: MW, start: "19:40", end: "21:30", sr: ["19:00", "19:40"] }] },
+    slots: [{ days: MW, start: "19:50", end: "21:30", sr: ["19:00", "19:50"] }] },
+  { name: "중등피팅", dept: "ELEM", teacher: "nayoung", room: "2강", grade: "중등피팅", textbook: "3-1 아폴론", type: "REGULAR", size: 3,
+    slots: [{ days: MW, start: "19:50", end: "21:30", sr: ["19:00", "19:50"] }] },
   { name: "9S1", dept: "ELEM", teacher: "field", room: "4강", grade: "중3", textbook: "대수 마플", type: "REGULAR", size: 4,
     slots: [{ days: MW, start: "16:20", end: "18:00", sr: ["18:00", "18:50"] }] },
   { name: "9A1", dept: "ELEM", teacher: "field", room: "4강", grade: "중3", textbook: "대수 쎈", type: "REGULAR", size: 4,
@@ -52,7 +57,7 @@ const REGULAR: ClassDef[] = [
   // 화목 — 초등
   { name: "4A2", dept: "ELEM", teacher: "nayoung", room: "2강", grade: "초4", textbook: "5-2 실력", type: "REGULAR", size: 4,
     slots: [{ days: TT, start: "14:40", end: "16:20", sr: ["16:20", "17:10"] }] },
-  { name: "초등피팅", dept: "ELEM", teacher: "yeseul", room: "1강", grade: "초4", textbook: "개별 진도", type: "REGULAR", size: 3,
+  { name: "초등피팅", dept: "ELEM", teacher: "yeseul", room: "1강", grade: "초등피팅", textbook: "개별 진도", type: "REGULAR", size: 3,
     slots: [{ days: TT, start: "14:40", end: "16:20", sr: ["16:20", "17:10"] }] },
   { name: "6A2", dept: "ELEM", teacher: "yeseul", room: "1강", grade: "초6", textbook: "1-1 데메테르", type: "REGULAR", size: 6,
     slots: [{ days: TT, start: "16:20", end: "18:00", sr: ["15:30", "16:20"] }] },
@@ -73,8 +78,11 @@ const REGULAR: ClassDef[] = [
     ] },
   { name: "H3", dept: "HIGH", teacher: "field", room: "대강의실", grade: "고3", textbook: "미적분 · 모의고사", type: "REGULAR", size: 3,
     slots: [{ days: [1, 4], start: "20:10", end: "22:00", sr: ["18:00", "19:50"] }] },
-  { name: "고등피팅", dept: "HIGH", teacher: "field", room: "대강의실", grade: "고1", textbook: "개별 진도", type: "REGULAR", size: 3,
+  { name: "고등피팅", dept: "HIGH", teacher: "field", room: "대강의실", grade: "고등피팅", textbook: "개별 진도", type: "REGULAR", size: 3,
     slots: [{ days: [3, 5], start: "20:10", end: "22:00", sr: ["18:00", "19:50"] }] },
+  // 토요일 오전 기하 — 수업 10:00~12:00(4강) 뒤 SR 12:00~1:00
+  { name: "기하", dept: "HIGH", teacher: "field", room: "4강", grade: "고2", textbook: "고등 기하 쎈", type: "REGULAR", size: 3,
+    slots: [{ days: [6], start: "10:00", end: "12:00", sr: ["12:00", "13:00"] }] },
 ];
 
 /** 개별반 (금/토) — 정규반 학생들이 한 반씩 추가로 다닌다 */
@@ -84,8 +92,8 @@ const INDIVIDUAL: ClassDef[] = [
   ["개별 금2-2", "nayoung", "2강", 5, "16:20", "18:00", ["15:30", "16:20"]],
   ["개별 금3-1", "yeseul", "1강", 5, "18:00", "19:40", ["17:10", "18:00"]],
   ["개별 금3-2", "nayoung", "2강", 5, "18:00", "19:40", ["17:10", "18:00"]],
-  ["개별 금4-1", "yeseul", "1강", 5, "19:40", "21:20", ["19:00", "19:40"]],
-  ["개별 금4-2", "nayoung", "2강", 5, "19:40", "21:20", ["19:00", "19:40"]],
+  ["개별 금4-1", "yeseul", "1강", 5, "19:50", "21:30", ["19:00", "19:50"]],
+  ["개별 금4-2", "nayoung", "2강", 5, "19:50", "21:30", ["19:00", "19:50"]],
   ["개별 토1-1", "yeseul", "1강", 6, "10:00", "11:40", ["11:40", "12:30"]],
   ["개별 토1-2", "nayoung", "2강", 6, "10:00", "11:40", ["11:40", "12:30"]],
   ["개별 토2-1", "yeseul", "1강", 6, "11:40", "13:20", ["10:50", "11:40"]],
@@ -104,7 +112,43 @@ const INDIVIDUAL: ClassDef[] = [
   size: 0,
 }));
 
-const CLASSES: ClassDef[] = [...REGULAR, ...INDIVIDUAL];
+/** 수업 없이 SR만 쓰는 반 — 수업 시간 = SR 시간, 강의실 = SR룸 */
+function srOnly(
+  name: string,
+  dept: "ELEM" | "HIGH",
+  teacher: string,
+  grade: string,
+  textbook: string,
+  type: "REVIEW" | "HOMEWORK",
+  days: number[],
+  start: string,
+  end: string,
+): ClassDef {
+  return { name, dept, teacher, room: "SR룸", grade, textbook, type, size: 0, slots: [{ days, start, end, sr: [start, end] }] };
+}
+
+/** 고등 누적오답 — 요일마다 반 하나, SR 자기주도 오후 6:00 ~ 10:00 (다 마치면 하원) */
+const REVIEW: ClassDef[] = ["월", "화", "수", "목", "금"].map((d, i) =>
+  srOnly(`누적오답_${d}`, "HIGH", "field", "누적오답", "자기주도", "REVIEW", [i + 1], "18:00", "22:00"),
+);
+
+/** 숙제반 — 신청하거나 숙제 미흡으로 참여. 담당 선생님은 아직 정하지 않았다. */
+const HOMEWORK: ClassDef[] = [
+  srOnly("숙제반 월수 8시", "ELEM", "", "숙제반", "숙제", "HOMEWORK", MW, "20:00", "22:00"),
+  srOnly("숙제반 화목 8시", "ELEM", "", "숙제반", "숙제", "HOMEWORK", TT, "20:00", "22:00"),
+  srOnly("숙제반 화목 4시", "ELEM", "", "숙제반", "숙제", "HOMEWORK", TT, "16:00", "18:00"),
+  srOnly("숙제반 월목 4시", "ELEM", "", "숙제반", "숙제", "HOMEWORK", [1, 4], "16:00", "18:00"),
+];
+
+const CLASSES: ClassDef[] = [...REGULAR, ...INDIVIDUAL, ...REVIEW, ...HOMEWORK];
+
+/** 이 컴퓨터에만 있는 실제 명단 { classes: { 반이름: [학생이름…] } } — 없으면 null */
+function loadLocalRoster(): Record<string, string[]> | null {
+  const file = path.join(process.cwd(), "data", "roster.local.json");
+  if (!existsSync(file)) return null;
+  const json = JSON.parse(readFileSync(file, "utf8")) as { classes?: Record<string, string[]> };
+  return json.classes ?? null;
+}
 
 // 가짜 학생 이름 — 성 × 이름 조합으로 겹치지 않게 만든다
 const SURNAMES = "김이박최정강조윤장임한오서신권황안송류전홍고문양손배백허남심노하곽성차주우구민진나지엄채원천방공현함변염여추도소석선설마길연위표명기반".split("");
@@ -215,24 +259,48 @@ export function seedDemo(db: DatabaseSync): void {
   );
   const classes: Record<string, number> = {};
   for (const c of CLASSES) {
-    const r = classInsert.run(c.name, c.dept, users[c.teacher], rooms[c.room], c.grade, c.textbook);
+    const r = classInsert.run(c.name, c.dept, users[c.teacher] ?? null, rooms[c.room], c.grade, c.textbook);
     classes[c.name] = Number(r.lastInsertRowid);
   }
 
   // 학생 — 정규반에 넣고, 초중등부 학생은 개별반(금/토)에도 하나씩 나눠 넣는다
   const studentInsert = db.prepare("INSERT INTO students (name, department, active) VALUES (?, ?, 1)");
   const memberInsert = db.prepare("INSERT INTO student_classes (student_id, class_id) VALUES (?, ?)");
-  const names = fakeNames(REGULAR.reduce((n, c) => n + c.size, 0));
-  let nameIdx = 0;
-  let individualIdx = 0;
-  for (const c of REGULAR) {
-    for (let i = 0; i < c.size; i++) {
-      const r = studentInsert.run(names[nameIdx++], c.dept);
-      const studentId = Number(r.lastInsertRowid);
-      memberInsert.run(studentId, classes[c.name]);
-      if (c.dept === "ELEM") {
-        const ind = INDIVIDUAL[individualIdx++ % INDIVIDUAL.length];
-        memberInsert.run(studentId, classes[ind.name]);
+  const roster = loadLocalRoster();
+  if (roster) {
+    // 실제 명단 — 같은 이름은 한 학생 (동명이인은 명단에서 "홍길동(초4)" 처럼 구분해 둔다)
+    const deptOf = new Map(CLASSES.map((c) => [c.name, c.dept]));
+    const studentDept = new Map<string, "ELEM" | "HIGH">();
+    for (const [className, members] of Object.entries(roster)) {
+      const dept = deptOf.get(className);
+      if (!dept) {
+        console.warn(`명단의 반 「${className}」이 시간표에 없어 건너뜁니다.`);
+        continue;
+      }
+      for (const n of members) if (studentDept.get(n) !== "HIGH") studentDept.set(n, dept);
+    }
+    const studentIds = new Map<string, number>();
+    for (const [n, dept] of studentDept) {
+      studentIds.set(n, Number(studentInsert.run(n, dept).lastInsertRowid));
+    }
+    for (const [className, members] of Object.entries(roster)) {
+      if (!deptOf.has(className)) continue;
+      for (const n of new Set(members)) memberInsert.run(studentIds.get(n)!, classes[className]);
+    }
+    console.log(`실제 명단: 학생 ${studentIds.size}명`);
+  } else {
+    const names = fakeNames(REGULAR.reduce((n, c) => n + c.size, 0));
+    let nameIdx = 0;
+    let individualIdx = 0;
+    for (const c of REGULAR) {
+      for (let i = 0; i < c.size; i++) {
+        const r = studentInsert.run(names[nameIdx++], c.dept);
+        const studentId = Number(r.lastInsertRowid);
+        memberInsert.run(studentId, classes[c.name]);
+        if (c.dept === "ELEM") {
+          const ind = INDIVIDUAL[individualIdx++ % INDIVIDUAL.length];
+          memberInsert.run(studentId, classes[ind.name]);
+        }
       }
     }
   }
@@ -256,7 +324,7 @@ export function seedDemo(db: DatabaseSync): void {
           slot.sr ? toMin(slot.sr[1]) : null,
           rooms[c.room],
           slot.sr ? rooms["SR룸"] : null,
-          users[c.teacher],
+          users[c.teacher] ?? null,
         );
       }
     }

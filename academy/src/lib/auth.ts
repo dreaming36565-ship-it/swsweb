@@ -57,12 +57,19 @@ export function findUserById(id: number): SessionUser | null {
   return toSessionUser(row);
 }
 
+/** 아이디 또는 한글 이름으로 로그인. 이름이 같은 직원이 둘 이상이면 이름으로는 로그인할 수 없다. */
 export function verifyLogin(loginId: string, password: string): SessionUser | null {
-  const row = getDb()
-    .prepare(
-      "SELECT id, login_id, name, role, department, active, password FROM users WHERE login_id = ?",
-    )
-    .get(loginId) as unknown as (UserRow & { password: string }) | undefined;
+  const select = "SELECT id, login_id, name, role, department, active, password FROM users";
+  const db = getDb();
+  let row = db.prepare(`${select} WHERE login_id = ?`).get(loginId) as unknown as
+    | (UserRow & { password: string })
+    | undefined;
+  if (!row) {
+    const byName = db.prepare(`${select} WHERE name = ?`).all(loginId) as unknown as (UserRow & {
+      password: string;
+    })[];
+    if (byName.length === 1) row = byName[0];
+  }
   if (!row || row.active !== 1) return null;
   if (row.password !== password) return null;
   return toSessionUser(row);
