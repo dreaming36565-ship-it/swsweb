@@ -1,28 +1,25 @@
 "use client";
 
 // 어느 메뉴에 있든 출결 팝업이 뜨도록 셸에 상주한다. 4초 폴링.
-// 팝업을 "나중에" 로 닫아도 3분 뒤 다시 뜨고, 알림 종에는 기록이 남는다.
+// 팝업은 ① 출석체크, ② 출결전화 두 가지뿐이고 "나중에" 가 없다 — 끝까지 처리해야 사라진다.
+// 출결 결과(지각·결석)는 팝업 없이 담당 선생님·관리자 알림함으로만 간다.
 
 import { useCallback, useEffect, useState } from "react";
-import TeacherCheckPopup from "./TeacherCheckPopup";
-import DeskCallPopup from "./DeskCallPopup";
-import TeacherConfirmPopup from "./TeacherConfirmPopup";
+import CheckPopup from "./CheckPopup";
+import CallPopup from "./CallPopup";
 import { apiGet } from "@/lib/http";
-import type { AttendanceEvent, SessionUser } from "@/lib/types";
+import type { AttendanceGroup, SessionUser } from "@/lib/types";
 
-const SNOOZE_MS = 3 * 60 * 1000;
-
-type Payload = { date: string; events: AttendanceEvent[] };
+type Payload = { date: string; groups: AttendanceGroup[] };
 
 export default function AttendanceHost({ user }: { user: SessionUser }) {
-  const [events, setEvents] = useState<AttendanceEvent[]>([]);
-  const [snoozed, setSnoozed] = useState<Record<number, number>>({});
-  const [muted, setMuted] = useState<Record<number, boolean>>({});
+  const [groups, setGroups] = useState<AttendanceGroup[]>([]);
+  const [muted, setMuted] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     try {
       const data = await apiGet<Payload>("/api/attendance/pending");
-      setEvents(data.events);
+      setGroups(data.groups);
     } catch {
       /* 폴링 실패는 다음 주기에 회복된다 */
     }
@@ -34,28 +31,24 @@ export default function AttendanceHost({ user }: { user: SessionUser }) {
     return () => clearInterval(t);
   }, [load]);
 
-  const now = Date.now();
-  const current = events.find((e) => (snoozed[e.id] ?? 0) < now);
-
+  const current = groups[0];
   if (!current) return null;
 
-  const later = () => setSnoozed((s) => ({ ...s, [current.id]: Date.now() + SNOOZE_MS }));
   const done = () => {
-    setEvents((list) => list.filter((e) => e.id !== current.id));
+    setGroups((list) => list.filter((g) => g.key !== current.key));
     void load();
   };
-  const toggleMute = () => setMuted((m) => ({ ...m, [current.id]: !m[current.id] }));
-
   const common = {
-    event: current,
-    muted: muted[current.id] ?? false,
-    onToggleMute: toggleMute,
-    onLater: later,
+    group: current,
+    muted: muted[current.key] ?? false,
+    onToggleMute: () => setMuted((m) => ({ ...m, [current.key]: !m[current.key] })),
     onDone: done,
   };
 
-  if (current.stage === "TEACHER_PENDING") return <TeacherCheckPopup {...common} />;
-  if (current.stage === "DESK_PENDING") return <DeskCallPopup {...common} />;
-  if (current.stage === "TEACHER_CONFIRM") return <TeacherConfirmPopup {...common} />;
-  return null;
+  // key 로 묶음이 바뀌면 입력 상태를 새로 시작한다
+  return current.kind === "CHECK" ? (
+    <CheckPopup key={current.key} user={user} {...common} />
+  ) : (
+    <CallPopup key={current.key} {...common} />
+  );
 }

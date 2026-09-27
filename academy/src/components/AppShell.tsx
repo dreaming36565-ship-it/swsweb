@@ -104,7 +104,7 @@ export default function AppShell({ user, children }: { user: SessionUser; childr
               <span className="text-base font-bold text-navy-900">{brand.branch}</span>
             </div>
             <div className="flex items-center gap-2">
-              <NotificationBell />
+              <NotificationBell user={user} />
               <button type="button" className="btn btn-ghost" onClick={() => void logout()}>
                 <IconLogout className="h-4 w-4" />
                 로그아웃

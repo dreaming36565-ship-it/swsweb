@@ -4,8 +4,13 @@ export type Role = "ADMIN" | "TEACHER" | "DESK";
 export type Department = "ELEM" | "HIGH";
 /** 수업 종류 — 보강은 여기 없다. 보강은 `보강 관리` 탭에서 따로 다룬다. */
 export type SessionType = "COMMON" | "INDIVIDUAL" | "REGULAR" | "REVIEW" | "ALPHA";
-export type Stage = "TEACHER_PENDING" | "DESK_PENDING" | "TEACHER_CONFIRM" | "DONE";
-export type AttStatus = "UNCHECKED" | "PRESENT" | "ABSENT" | "LATE";
+/** 출결 단계 — 1차 출석체크 → 데스크 출결전화 → 끝 */
+export type Stage = "CHECK" | "CALL" | "DONE";
+/** 1차 출석체크를 누가 하는가 — 알파가 먼저 시작하면 데스크, 수업이 먼저면 담당 선생님 */
+export type Checker = "TEACHER" | "DESK";
+/** NO_CONTACT = 학생·학부모 모두 부재중이라 어머니께 카톡을 남긴 상태 */
+export type AttStatus = "UNCHECKED" | "PRESENT" | "ABSENT" | "LATE" | "NO_CONTACT";
+export type CallResult = "OK" | "MISS";
 
 export const ROLE_LABEL: Record<Role, string> = {
   ADMIN: "관리자",
@@ -31,9 +36,8 @@ export const MAKEUP_STATUS_LABEL: Record<MakeupStatus, string> = {
 };
 
 export const STAGE_LABEL: Record<Stage, string> = {
-  TEACHER_PENDING: "출석체크 대기",
-  DESK_PENDING: "출결전화 대기",
-  TEACHER_CONFIRM: "최종확인 대기",
+  CHECK: "출석체크 대기",
+  CALL: "출결전화 대기",
   DONE: "완료",
 };
 
@@ -42,6 +46,7 @@ export const STATUS_LABEL: Record<AttStatus, string> = {
   PRESENT: "출석",
   ABSENT: "결석",
   LATE: "지각",
+  NO_CONTACT: "연락 안 됨",
 };
 
 export type Brand = {
@@ -144,9 +149,27 @@ export type AttendanceRecord = {
   studentId: number;
   studentName: string;
   status: AttStatus;
+  /** 1차 출석체크에서 "결석 연락 받음" 으로 처리했는가 */
+  preNotified: 0 | 1;
   absentReason: string | null;
   lateReason: string | null;
-  eta: string | null;
+  /** 도착예정시간 (분) */
+  etaMin: number | null;
+  /** 지각인데 학부모도 도착시간을 모름 */
+  etaUnknown: 0 | 1;
+  /** 결석으로 변경하기 전 상태 (연락 안 됨 / 도착시간 모르는 지각) — 되돌리기용 */
+  absentFrom: AttStatus | null;
+  studentCall: CallResult | null;
+  studentCallAt: number | null;
+  parentCall: CallResult | null;
+  parentCallAt: number | null;
+  kakaoAt: number | null;
+  /** 통화가 된 뒤 고른 결과 (출결전화 중에만 쓰고, 저장하면 status 로 확정된다) */
+  callResult: "LATE" | "ABSENT" | null;
+  /** 도착 시각 (분) — 전화 중 도착, 또는 연락 안 됨이었다가 나중에 도착 */
+  arrivedAt: number | null;
+  /** 연락 안 됨이었다가 나중에 도착해 지각으로 옮겨졌는가 */
+  lateArrival: 0 | 1;
 };
 
 export type AttendanceEvent = {
@@ -154,6 +177,10 @@ export type AttendanceEvent = {
   sessionId: number;
   date: string;
   stage: Stage;
+  checker: Checker;
+  /** 출결이 시작된 시각(수업·알파 중 이른 쪽, 분) */
+  triggerMin: number;
+  classId: number;
   className: string;
   teacherId: number | null;
   teacherName: string | null;
@@ -162,7 +189,30 @@ export type AttendanceEvent = {
   dayOfWeek: number;
   startMin: number;
   endMin: number;
+  alphaStartMin: number | null;
+  alphaEndMin: number | null;
   records: AttendanceRecord[];
+};
+
+/** 같은 시각에 시작하는 반들을 묶은 팝업 한 장 */
+export type AttendanceGroup = {
+  key: string;
+  kind: "CHECK" | "CALL";
+  triggerMin: number;
+  events: AttendanceEvent[];
+};
+
+/** 출결전화 팝업에서 학생 한 명의 전화 진행 상태 (누를 때마다 서버에 저장) */
+export type CallState = {
+  studentCall: CallResult | null;
+  parentCall: CallResult | null;
+  kakao: boolean;
+  arrived: boolean;
+  callResult: "LATE" | "ABSENT" | null;
+  reason: string;
+  etaMin: number | null;
+  /** 도착시간 모름 — 시간이 없어도 지각으로 저장할 수 있다 */
+  etaUnknown: boolean;
 };
 
 export type Notification = {

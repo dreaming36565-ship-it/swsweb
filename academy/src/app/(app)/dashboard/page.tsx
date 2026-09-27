@@ -62,11 +62,10 @@ export default async function DashboardPage() {
         {/* 오늘 출결 처리 현황 */}
         <section className="card p-6">
           <h2 className="text-base font-bold text-ink">오늘 출결 처리 현황</h2>
-          <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="mt-4 grid grid-cols-3 gap-3">
             {[
-              { label: "출석체크 대기", value: summary.byStage.TEACHER_PENDING, tone: "text-navy-800" },
-              { label: "출결전화 대기", value: summary.byStage.DESK_PENDING, tone: "text-late" },
-              { label: "최종확인 대기", value: summary.byStage.TEACHER_CONFIRM, tone: "text-present" },
+              { label: "출석체크 대기", value: summary.byStage.CHECK, tone: "text-navy-800" },
+              { label: "출결전화 대기", value: summary.byStage.CALL, tone: "text-late" },
               { label: "완료", value: summary.byStage.DONE, tone: "text-muted" },
             ].map((s) => (
               <div key={s.label} className="rounded-lg border border-line px-4 py-3">
@@ -77,8 +76,9 @@ export default async function DashboardPage() {
           </div>
           <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-line pt-3 text-sm">
             <span className="text-present">출석 {summary.present}</span>
-            <span className="text-alert">결석 {summary.absent}</span>
             <span className="text-late">지각 {summary.late}</span>
+            <span className="text-alert">결석 {summary.absent}</span>
+            <span className="text-navy-700">연락 안 됨 {summary.noContact}</span>
             <span className="text-muted">미체크 {summary.unchecked}</span>
           </div>
         </section>

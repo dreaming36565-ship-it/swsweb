@@ -96,21 +96,44 @@ npm run seed --prefix academy    # DB 삭제 → 다음 실행 때 데모 데이
 색: 핑크 = 이동 가능 / 진한 네이비 = 선택 학생 / 흰색 = 사용 중 / 회색 = 이동 불가.
 구현: `src/lib/sr.ts` `movableSeats()`.
 
-### 4.6 출결 3단계 워크플로우
+### 4.6 출결 워크플로우 (2026-09-27 개편)
+> 학원 순서: 출석체크 → 학생 전화 → (부재중) 학부모 전화 → (부재중) 어머니께 부재중 카톡.
+> 통화가 되면 지각(사유+도착예정시간) 또는 결석(사유).
+
 ```
-수업 시작 → +2분 → 담당 선생님 "출석체크해주세요."
-  → [제출 완료] → 데스크 "출결전화 돌려주세요."
-  → [저장 완료] → 담당 선생님 "출결사항 확인해주세요."
-  → [확인 완료] → 종료(DONE)
+[수업·알파 중 먼저 시작하는 쪽] +2분
+  → ① "출석체크해주세요."  (팝업)  알파가 먼저 = 데스크 전원 / 수업이 먼저 = 담당 선생님
+       같은 시각에 시작한 반들은 팝업 한 장에 반별로. "왔음" 체크박스 + 반마다 [전원 출석]
+       미리 연락 온 학생은 [결석 연락] + 사유 → 전화 없이 바로 결석
+  → 체크 안 된 학생이 있으면 ② "출결전화 돌려주세요." (팝업, 데스크 전원 — 초중고 구분 없음)
+       학생마다 ① 학생 전화 → ② 학부모 전화 → ③ 카톡 버튼. 누를 때마다 서버 저장 + 시각 자동 기록.
+       같은 버튼을 다시 누르면 취소, 앞 단계를 취소하면 뒤 단계도 함께 취소(lib/attendance.ts normalizeCall).
+       전화하는 사이 도착하면 [도착] → 출석.
+       남은 인원 = 아직 아무와도 연락이 닿지 않은 학생만(도착·통화됨·카톡 남김은 빠짐).
+       남은 인원 0명 + 통화된 학생의 사유(지각은 도착예정시간까지)가 다 채워져야 [저장 완료].
+  → ③ 결과: 팝업 없음. 🔔 알림함에만 "출결사항 확인해주세요." (지각·결석·연락 안 됨이 있을 때만)
+       담당 선생님 = 본인 반 / 관리자 = 이번에 끝난 모든 반(반 이름 표시). 알림을 누르면 결과 표가 펼쳐진다.
+  → ④ 연락 안 됨 학생이 나중에 오면 데스크가 결석관리에서 [도착] → 지각으로 이동. 알림은 보내지 않는다.
 ```
-- 상태 3종: **출석 / 결석 / 미체크**. 출석·결석 동시 체크 불가, 같은 걸 다시 누르면 미체크로 복귀.
-- 결석 체크 시 **결석 사유 필수**.
-- 데스크는 미체크 학생에게 전화 후 **지각 사유 + 도착예정시간** 입력 → 자동으로 `LATE` 처리.
-- 팝업을 닫아도(`나중에`) 3분 뒤 다시 뜨고, 알림 종 아이콘·`알림 & 공지`에 기록이 남는다.
+- **도착시간 모름**: 통화는 됐는데 학부모도 도착시간을 모르면 도착 예정 옆 **[모름]** → 시간 없이 지각으로 저장
+  ("지각 · 도착시간 모름"). 학생이 오면 결석관리 [도착] 으로 실제 도착 시각을 남긴다(알림 없음).
+- **[결석으로 변경]**: 결석관리에서 연락 안 됨 / 도착시간 모름 지각 학생이 끝내 안 오면 사유를 적고 결석으로 바꾼다
+  (보강 관리에 자동 등록, 알림 없음). `absent_from` 에 이전 상태를 남겨 **[되돌리기]** 가능 — 단 보강을 이미 잡았으면 불가.
+- 단계: `CHECK → CALL → DONE`. 모두 출석이면 CHECK 에서 바로 DONE.
+- 상태: `UNCHECKED / PRESENT / LATE / ABSENT / NO_CONTACT(연락 안 됨)`.
+- **팝업에 "나중에" 버튼이 없다** — 끝까지 처리해야 사라진다. 관리자는 팝업을 받지 않는다.
+- 여러 반을 한 번에 제출하므로 하나라도 오류면 **아무것도 저장하지 않는다**(검사 후 트랜잭션).
+- 같은 시각에 열린 반들의 "출석체크해주세요." 알림도 **한 건으로 묶는다**(알림함이 번잡하지 않게).
+- 결석은 `보강 관리` 의 "보강이 필요한 결석" 에 자동으로 올라간다(결석 연락 받음 포함).
+- 결석관리의 "지금 열기" 는 **출결 시작 시각별로 묶어** 한 번에 연다. 누구나 누를 수 있다.
+  단 **실제 시간이 되어야** 열린다 — 오늘은 출결 시작 시각이 지나야 하고(그 전엔 버튼에 "오후 9:00부터"), 앞날은 불가.
+  자동으로 열렸어야 할 출결을 놓쳤을 때 쓰는 버튼이다. (서버 `triggerAttendance()` 에서도 막는다)
+- 구현: 규칙(순수 함수) `lib/attendance.ts`, DB `repo.ts` 출결 절, 팝업 `components/attendance/CheckPopup.tsx`·`CallPopup.tsx`,
+  결과 표 `ResultTable.tsx`(알림함·결석관리 공용), API `POST /api/attendance/submit` (`step: CHECK | CALL | CALL_DONE | ARRIVE`).
 
 ### 4.7 출결 알림음
 - 팝업이 뜨는 순간 울리고, **제출 전까지 1분마다 3초씩** 반복.
-- 적용 대상: `TEACHER_PENDING`(출석체크), `DESK_PENDING`(출결전화). 최종확인 단계는 제외.
+- 적용 대상: ① 출석체크, ② 출결전화 팝업. 결과(③)는 팝업이 없어 소리도 없다.
 - 팝업 오른쪽 위 `1분마다 알림` 버튼으로 그 팝업만 음소거. 설정에서 전체 on/off + 미리듣기.
 - 구현: `src/lib/alarm.ts` + `src/components/useAlarmLoop.ts`.
 
@@ -156,7 +179,7 @@ npm run seed --prefix academy    # DB 삭제 → 다음 실행 때 데모 데이
 | 선생님 팝업 | `출석체크해주세요.` |
 | 데스크 팝업 | `출결전화 돌려주세요.` |
 | 데스크 팝업 하단 | `체크되지 않은 친구들 전화 돌려주시고, 지각사유와 도착예정시간 남겨주세요.` |
-| 선생님 최종 팝업 | `출결사항 확인해주세요.` |
+| 출결 결과 알림 제목 (팝업 아님, 알림함) | `출결사항 확인해주세요.` |
 | 사이드바 메뉴 | `결석관리` (출결관리 아님) |
 | 사이드바 메뉴 | `보강 관리` |
 | 시간표 입력 버튼 | `입력완료` |
@@ -228,7 +251,7 @@ academy/src/
 │  ├─ UserFormModal.tsx       계정 추가/수정 (아이디 직접 부여)
 │  ├─ Modal.tsx / Icons.tsx / LiveClock.tsx / NotificationBell.tsx / DashboardTasks.tsx
 │  ├─ useAlarmLoop.ts         ★ 1분마다 3초 알림음 루프
-│  ├─ attendance/             출결 팝업 3종 + PopupFrame + AttendanceHost + 결석관리 페이지
+│  ├─ attendance/             출결 팝업 2종(CheckPopup·CallPopup) + PopupFrame + AttendanceHost + ResultTable + 결석관리 페이지
 │  ├─ makeup/                 보강 관리 화면
 │  ├─ classes/ settings/ sr/ timetable/
 └─ lib/
@@ -237,6 +260,7 @@ academy/src/
    ├─ repo.ts                 ★ 모든 도메인 쿼리 + 기준정보 CRUD (가장 큰 파일)
    ├─ sr.ts                   ★ SR 자동배정 / 이동가능 좌석 (순수 함수)
    ├─ conflicts.ts            ★ 시간표 충돌 감지 (순수 함수)
+   ├─ attendance.ts           ★ 출결 규칙 — 시작 시각·담당, 전화 순서·남은 인원 (순수 함수, 서버·팝업 공용)
    ├─ auth.ts                 세션 + PERMISSIONS
    ├─ api.ts                  withUser() 래퍼 + ok()/fail()
    ├─ http.ts                 클라이언트 fetch 래퍼 (한국어 오류 메시지)
@@ -257,10 +281,10 @@ academy/src/
 | GET | `/api/sr?day=&dept=` | 좌석 배정 |
 | GET | `/api/sr/options?assignmentId=` | 이동 가능 좌석 |
 | POST | `/api/sr/move` · `/api/sr/reset` | 좌석 이동 / 요일 자동배정 재계산 |
-| GET | `/api/attendance/pending` | **4초 폴링** — tick + 내가 처리할 팝업 |
-| POST | `/api/attendance/submit` | `step: TEACHER \| DESK \| CONFIRM` 단계 전이 |
-| POST | `/api/attendance/trigger` | 수동으로 출결 즉시 열기 |
-| GET | `/api/attendance/list?date=&dept=` | 결석관리 페이지 |
+| GET | `/api/attendance/pending` | **4초 폴링** — tick + 내가 처리할 팝업 묶음(`groups`, 같은 시각 반끼리) |
+| POST | `/api/attendance/submit` | `step: CHECK`(1차 체크 제출) · `CALL`(학생 1명 전화 상태 저장) · `CALL_DONE`(출결전화 저장) · `ARRIVE`(나중 도착 토글) · `TO_ABSENT`(결석으로 변경) · `UNDO_ABSENT`(되돌리기) |
+| POST | `/api/attendance/trigger` | `sessionIds[]` 출결 즉시 열기 (같은 시각 반 한 번에) |
+| GET | `/api/attendance/list?date=&dept=` | 결석관리 페이지. `?events=1,2` 면 그 출결만 (알림함 결과 표) |
 | GET/POST/PATCH/DELETE | `/api/makeups?dept=&unfinished=` | 보강 CRUD + 보강이 필요한 결석 목록 |
 | GET/POST/PATCH/DELETE | `/api/classes` | 반 CRUD (payload에 rooms/teachers/students 동봉) |
 | GET/POST/PATCH/DELETE | `/api/rooms` | 강의실 CRUD (`move: -1\|1` 로 순서 변경) |
@@ -281,8 +305,10 @@ student_classes(student_id→students, class_id→classes)  PK(student_id, class
 timetable_sessions(id, day_of_week 0=일, class_id, type, start_min, end_min,
                    alpha_start_min, alpha_end_min, room_id, alpha_room_id, teacher_id)
 sr_assignments(id, session_id, student_id, day_of_week, seat, start_min, end_min, is_manual)
-attendance_events(id, session_id, date, stage, created_at, updated_at)  UNIQUE(session_id,date)
-attendance_records(id, event_id, student_id, status, absent_reason, late_reason, eta)
+attendance_events(id, session_id, date, checker, trigger_min, stage, created_at, updated_at)  UNIQUE(session_id,date)
+attendance_records(id, event_id, student_id, status, pre_notified, absent_reason, late_reason, eta_min, eta_unknown, absent_from,
+                   student_call, student_call_at, parent_call, parent_call_at, kakao_at,
+                   call_result, arrived_at, late_arrival)
 notifications(id, user_id, kind, title, body, link, read_at, created_at)
 tasks(id, assignee_id, created_by, title, done, due_date, created_at)
 notices(id, title, body, department, author_id, created_at)
@@ -293,8 +319,10 @@ makeups(id, student_id, class_id, absent_date, date, start_min, end_min,
 - `role`: `ADMIN | TEACHER | DESK`
 - `department`: `ELEM | HIGH`
 - `type`: `COMMON | INDIVIDUAL | REGULAR | REVIEW | ALPHA`
-- `stage`: `TEACHER_PENDING → DESK_PENDING → TEACHER_CONFIRM → DONE`
-- `attendance_records.status`: `UNCHECKED | PRESENT | ABSENT | LATE`
+- `checker`: `TEACHER | DESK` (1차 출석체크 담당), `trigger_min`: 출결 시작 시각(수업·알파 중 이른 쪽, 분)
+- `stage`: `CHECK → CALL → DONE`
+- `attendance_records.status`: `UNCHECKED | PRESENT | ABSENT | LATE | NO_CONTACT`
+- `*_call`: `OK`(통화됨) | `MISS`(부재중), `*_at` / `kakao_at` / `arrived_at` / `eta_min`: 분 정수
 - `makeups.status`: `PLANNED | DONE | CANCELED`
 
 ## 9. 디자인 시스템
@@ -335,7 +363,7 @@ makeups(id, student_id, class_id, absent_date, date, start_min, end_min,
    React 가 거부한다. `repo.ts` 의 `rows()`/`row()` 헬퍼가 평범한 객체로 복사해 주므로 반드시 그걸 통할 것.
 10. **부서(dept) 필터는 `ALL` 문자열**을 쓴다.
 11. **강의실은 부서 무관**이다.
-12. 출결 이벤트는 **`/api/attendance/pending` 이 호출될 때만** 생성된다(폴링 시점 tick).
+12. 출결 이벤트는 **`/api/attendance/pending` 이 호출될 때만** 생성된다(폴링 시점 tick). 시작 기준은 수업·알파 중 **이른 쪽 +2분**.
     아무도 앱을 켜두지 않으면 그 시간 이벤트가 안 열린다 — 알려진 한계(11.3 참고).
 13. 작업 후 **`npm run build`** 로 타입체크하고, 브라우저에서 실제로 눌러 확인할 것.
 
@@ -382,6 +410,8 @@ makeups(id, student_id, class_id, absent_date, date, start_min, end_min,
 | 7 | **2026-09-01 — 시간 표기·수업 종류·보강 관리.** 시간 입력을 오전/오후 분리 방식으로 바꾸고 **앱 전체 표기를 12시간제**로 통일. 수업 종류를 `공통·개별·정규·누적오답·알파` 로 교체(보강 제외). 시간표 입력에 **요일 다중 선택** 추가. **`보강 관리` 탭 신설**(결석↔보강 추적, `makeups` 테이블). 확인창을 **엔터로 확정** 가능하게 함 |
 | 8 | **2026-09-27 — 학생 여러 반 소속 + 실제 반 구성.** `students.class_id` 를 없애고 `student_classes` 다대다로 교체. 반 관리에서 기존 학생을 다른 반에 추가 / 이 반에서만 빼기. 데모 데이터를 실제 4분기 반(정규 20개 + 개별 금/토 13개)·시간으로 교체하고 학생은 가짜 이름으로 생성. 직원 데모 계정 정리(안예슬 추가, 박지훈·한서연 제거). 이후 계획: 결석보강관리 보강 → 숙제검사·숙제반 → SR 날짜별 배정 |
 | 9 | **2026-09-27 — 반 색상 통일.** 같은 반의 수업·알파 블록을 **같은 색**으로(알파는 점선 테두리로 구분). 같은 요일 안에서는 반마다 다른 색(`colors.ts` `classColorMap()`, 12색). 색은 부서 필터와 무관하게 그 요일 전체 반 기준(`dayClassIds`)이라 시간표·SR 화면 색이 항상 같다. 시간표에서 같은 칸·같은 시간 블록(SR룸 알파)은 겹치지 않게 **나란히 배치**하고 칸 폭을 그만큼 넓힘 |
+| 10 | **2026-09-27 — 출결 흐름 개편.** 수업·알파 중 먼저 시작하는 쪽 기준으로 1차 체크 담당 결정(알파 먼저=데스크). 같은 시각 반들을 팝업 한 장에 반별로. 결석 연락 받음. 데스크 출결전화를 학생→학부모→카톡 순서 버튼으로(누를 때마다 저장·시각 기록, 다시 누르면 취소). 남은 인원 = 연락 안 닿은 학생만. 팝업 "나중에" 삭제. 선생님 최종확인 팝업 삭제 → 결과는 알림함에만(선생님 본인 반 / 관리자 전체, 펼치면 결과 표). 연락 안 됨 → 나중 도착 시 데스크가 결석관리에서 지각 처리(알림 없음). 상태 `NO_CONTACT` 추가, 단계 `CHECK → CALL → DONE` |
+| 11 | **2026-09-27 — 출결 보완.** "지금 열기" 는 실제 출결 시작 시각이 지나야 가능(앞날 불가, 서버에서도 차단). 지각 **도착시간 모름** 버튼. 결석관리 **[결석으로 변경]**(사유 필수, 되돌리기 가능) |
 
 ## 13. 재구축(6회차) 시 달라진 점
 
@@ -408,9 +438,12 @@ npm run dev --prefix academy
    A열=고1수학A, B열=5A1, C열=5B2, D열=고1영어A 처럼 **반별 세로줄**이면 정상.
 2. **SR 이동 규칙** — 위 화면에서 B1 김서준(17:10~18:00) 클릭 → 이동 가능 좌석이 `A6 B6 C6 D6` 네 곳만
    핑크로 뜨면 정상. A1~A5는 지금 비어 보여도 이용시간이 겹쳐 이동 불가다.
-3. **출결 워크플로우** — 결석관리 → 오른쪽 `지금 열기` → `출석체크해주세요.` 팝업 →
-   결석만 체크하고 사유를 비우면 경고가 뜨는지 → `제출 완료` → `출결전화 돌려주세요.` →
-   지각 사유·도착예정시간 입력 → `저장 완료` → `출결사항 확인해주세요.` → `확인 완료`.
+3. **출결 워크플로우** — `desk` 로그인 → 결석관리 → 오른쪽 알파 시작 묶음 `지금 열기` → `출석체크해주세요.`
+   (반별 카드, 결석 연락 + 사유 비우면 제출 버튼이 "결석 사유 1명 입력 필요") → `제출 완료` →
+   `출결전화 돌려주세요.` 에서 학생/학부모/카톡 순서·다시 눌러 취소·남은 인원 숫자 확인 → `저장 완료` →
+   `admin` 으로 로그인해 🔔 알림 → 결과 표(반 이름 포함). 연락 안 됨 학생은 결석관리에서 `도착` → 지각.
+   (지금 열기는 시작 시각이 지나야 눌린다. 수업 없는 날이나 시간 전에 확인하려면 시간표에 **지금보다 이른 시각**의
+   임시 수업을 넣고 확인한 뒤 `npm run seed` 로 지운다.)
 4. **알림음 반복** — 팝업을 제출하지 않고 1분 기다리면 다시 3초 울리는지.
 5. **충돌 감지** — 화요일에 5A1 수업을 `3강 15:00~17:00 / 최나영` 으로 하나 더 넣으면
    상단에 빨간 경고 바로 강의실 중복·선생님 중복 2건이 뜬다. 지우면 0건으로 돌아온다.
@@ -428,25 +461,12 @@ npm run dev --prefix academy
 학원이 구글 스프레드시트로 하던 **시간표 · SR좌석표 · 숙제검사 · 숙제반 관리 · 결석보강관리** 를 전부 이 앱으로 옮긴다.
 원본 시트 엑셀 2개(`2026 9월_유투엠.xlsx`, `2026 숙제반 관리.xlsx`)가 저장소 루트에 있으나 **실제 학생 정보라 git 제외**(이 컴퓨터에만 있음).
 
-### 15.2 바로 다음 할 일 — 출결 알림 흐름 변경 (답변 대기 중)
-요청: **수업이 먼저 시작하면 담당T에게, 알파가 먼저 시작하면 데스크에게** 출결체크 알림.
-현재 코드는 알파를 무시하고 `수업 시작 +2분` 에만 담당T에게 연다 (`repo.ts` `tickAttendance()`).
-
-제안한 흐름:
-```
-[수업 먼저] 수업 시작 +2분 → 담당T "출석체크해주세요." → 데스크 "출결전화 돌려주세요." → 담당T "출결사항 확인해주세요." (기존 그대로)
-[알파 먼저] 알파 시작 +2분 → 데스크 "출석체크해주세요."(SR에서 체크, 같은 팝업에서 미체크 학생 전화·지각사유 입력)
-            → 수업 시작 +2분 → 담당T "출결사항 확인해주세요."
-```
-**사용자에게 물어본 질문 (답을 받아야 진행):**
-- Q1. 알파 먼저인 반: 데스크가 출석체크 + 출결전화를 **한 팝업**에서? 아니면 기존처럼 두 단계?
-- Q2. 알파 먼저인 반도 수업 시작 때 **담당T 최종확인**이 필요한가?
-- Q3. 데스크 알림은 **모든 데스크**에게? **해당 부서 데스크**에게만?
-
-답을 받으면 → 팝업 모양 **그림 먼저** → "코딩해줘" 후 구현.
+### 15.2 출결 알림 흐름 — ✅ 완료 (10회차, 확정 규칙은 4.6)
+그림(시안)은 `academy/public/mockups/attendance-flow.html` 에 있다(git 제외, 이 컴퓨터에만).
 
 ### 15.3 그 다음 단계 (순서 합의됨, 각 단계 그림 먼저)
 1. ~~학생 여러 반 소속~~ ✅ 완료 (8회차)
+1-1. ~~출결 알림 흐름~~ ✅ 완료 (10회차)
 2. **결석보강관리 보강** — 결석 체크 시 이름·반·담당T·결석사유·결석일자 자동 기재. 담당T가 보강일시 입력
    (**여러 번 나눠서** 가능, **"과제로 대체"** 선택 가능), 상태 `보강 전 / 보강일정 조율중 / 보강 완료`,
    **드림플러스·에듀OK 입력했음 체크**(외부 프로그램, 체크만), 특이사항 메모.

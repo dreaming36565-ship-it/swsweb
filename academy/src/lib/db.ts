@@ -76,24 +76,44 @@ CREATE TABLE IF NOT EXISTS sr_assignments (
   is_manual INTEGER NOT NULL DEFAULT 0
 );
 
+-- 출결 1건 = 수업 1개의 그 날짜 출결.
+-- checker: 1차 출석체크를 누가 하는가 (알파가 먼저 시작하면 DESK, 수업이 먼저면 TEACHER)
+-- trigger_min: 출결이 시작되는 시각(수업·알파 중 이른 쪽). 같은 시각의 반들은 팝업 하나로 묶인다.
+-- stage: CHECK(1차 출석체크) → CALL(데스크 출결전화) → DONE
 CREATE TABLE IF NOT EXISTS attendance_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id INTEGER NOT NULL REFERENCES timetable_sessions(id) ON DELETE CASCADE,
   date TEXT NOT NULL,
+  checker TEXT NOT NULL,
+  trigger_min INTEGER NOT NULL,
   stage TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(session_id, date)
 );
 
+-- status: UNCHECKED(아직 모름) / PRESENT / LATE / ABSENT / NO_CONTACT(학생·학부모 부재중, 카톡 남김)
+-- 전화 기록: *_call 은 'OK'(통화됨) | 'MISS'(부재중), *_at 은 누른 시각(분)
+-- eta_unknown: 지각인데 학부모도 도착시간을 모름 / absent_from: 결석으로 변경하기 전 상태(되돌리기용)
 CREATE TABLE IF NOT EXISTS attendance_records (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   event_id INTEGER NOT NULL REFERENCES attendance_events(id) ON DELETE CASCADE,
   student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
   status TEXT NOT NULL DEFAULT 'UNCHECKED',
+  pre_notified INTEGER NOT NULL DEFAULT 0,
   absent_reason TEXT,
   late_reason TEXT,
-  eta TEXT,
+  eta_min INTEGER,
+  eta_unknown INTEGER NOT NULL DEFAULT 0,
+  absent_from TEXT,
+  student_call TEXT,
+  student_call_at INTEGER,
+  parent_call TEXT,
+  parent_call_at INTEGER,
+  kakao_at INTEGER,
+  call_result TEXT,
+  arrived_at INTEGER,
+  late_arrival INTEGER NOT NULL DEFAULT 0,
   UNIQUE(event_id, student_id)
 );
 
