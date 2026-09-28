@@ -242,8 +242,7 @@ export function seedDemo(db: DatabaseSync): void {
   );
   const users: Record<string, number> = {};
   const userDefs: [string, string, string, string][] = [
-    ["admin", "김도현", "ADMIN", "ELEM"],
-    ["yeseul", "안예슬", "TEACHER", "ELEM"],
+    ["yeseul", "안예슬", "ADMIN", "ELEM"], // 관리자 + 담당 반이 있는 선생님
     ["nayoung", "최나영", "TEACHER", "ELEM"],
     ["field", "정필드", "TEACHER", "HIGH"],
     ["desk", "이수민", "DESK", "ELEM"],
@@ -340,21 +339,21 @@ export function seedDemo(db: DatabaseSync): void {
     "이번 주 출결 전화 안내",
     "미체크 학생은 수업 시작 20분 이내에 전화 부탁드립니다. 지각 사유와 도착예정시간을 꼭 남겨주세요.",
     "ALL",
-    users.admin,
+    users.yeseul,
     now,
   );
   noticeInsert.run(
     "SR룸 좌석 이용 수칙",
     "알파 시간 좌석은 자동배정을 기본으로 합니다. 자리 이동이 필요한 경우 SR 관리에서 변경해 주세요.",
     "ALL",
-    users.admin,
+    users.yeseul,
     now,
   );
   noticeInsert.run(
     "고등부 정기 시험 대비 일정",
     "다음 주부터 고등부는 시험 대비 보강이 추가됩니다. 시간표를 확인해 주세요.",
     "HIGH",
-    users.admin,
+    users.yeseul,
     now,
   );
 
@@ -363,10 +362,10 @@ export function seedDemo(db: DatabaseSync): void {
     "INSERT INTO tasks (assignee_id, created_by, title, done, due_date, created_at) VALUES (?, ?, ?, ?, ?, ?)",
   );
   const today = now.slice(0, 10);
-  taskInsert.run(users.nayoung, users.admin, "학부모 상담 자료 준비", 0, today, now);
-  taskInsert.run(users.nayoung, users.admin, "보강 학생 과제 확인", 0, today, now);
-  taskInsert.run(users.nayoung, users.admin, "주간 학습 리포트 작성", 0, null, now);
-  taskInsert.run(users.field, users.admin, "고1 모의고사 채점", 0, today, now);
-  taskInsert.run(users.desk, users.admin, "결석 학생 학부모 안내 문자", 0, today, now);
-  taskInsert.run(users.admin, users.admin, "다음 달 시간표 초안", 0, null, now);
+  taskInsert.run(users.nayoung, users.yeseul, "학부모 상담 자료 준비", 0, today, now);
+  taskInsert.run(users.nayoung, users.yeseul, "보강 학생 과제 확인", 0, today, now);
+  taskInsert.run(users.nayoung, users.yeseul, "주간 학습 리포트 작성", 0, null, now);
+  taskInsert.run(users.field, users.yeseul, "고1 모의고사 채점", 0, today, now);
+  taskInsert.run(users.desk, users.yeseul, "결석 학생 학부모 안내 문자", 0, today, now);
+  taskInsert.run(users.yeseul, users.yeseul, "다음 달 시간표 초안", 0, null, now);
 }
