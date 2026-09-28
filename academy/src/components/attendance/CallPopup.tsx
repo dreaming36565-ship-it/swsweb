@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import PopupFrame, { WhoBadge } from "./PopupFrame";
 import TimeSelect from "../TimeSelect";
+import ReasonChips from "./ReasonChips";
 import { useAlarmLoop } from "../useAlarmLoop";
 import { apiPost, errorMessage } from "@/lib/http";
 import { callStateOf, isReached, isRemaining, needsInfo, normalizeCall } from "@/lib/attendance";
@@ -223,9 +224,14 @@ export default function CallPopup({
                       className={`field min-w-[200px] flex-1 ${state.reason.trim() ? "" : "border-late"}`}
                       placeholder={state.callResult === "LATE" ? "지각 사유 예) 학교 행사" : "결석 사유 예) 병결"}
                       value={state.reason}
-                      onChange={(e) => change(id, { reason: e.target.value }, false)}
+                      onChange={(e) => change(id, { reason: e.target.value, absentCat: null }, false)}
                       onBlur={() => dirty.current.has(id) && void save(id, stateOf(id))}
                     />
+                  ) : null}
+                  {state.callResult === "ABSENT" ? (
+                    <div className="w-full">
+                      <ReasonChips value={state.reason} onPick={(reason, cat) => change(id, { reason, absentCat: cat })} />
+                    </div>
                   ) : null}
                   {state.callResult === "LATE" ? (
                     <div className="flex items-center gap-1.5">

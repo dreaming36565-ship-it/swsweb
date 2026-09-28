@@ -3,10 +3,10 @@ import { assert } from "@/lib/errors";
 import { createTask, deleteTask, listTasks, listUsers, setTaskDone } from "@/lib/repo";
 
 export const GET = withUser(({ user, req }) => {
-  const all = strParam(req, "scope") === "all" && user.role === "ADMIN";
+  const all = strParam(req, "scope") === "all" && user.roles.includes("ADMIN");
   return {
     tasks: listTasks({ assigneeId: user.id, all }),
-    users: user.role === "ADMIN" ? listUsers() : [],
+    users: user.roles.includes("ADMIN") ? listUsers() : [],
   };
 });
 

@@ -27,7 +27,7 @@ export default function PopupFrame({
   footer: ReactNode;
 }) {
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-navy-950/45 p-6 fade-in">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-navy-950/45 p-6 fade-in print:hidden">
       <div className="card pop-in flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden">
         <div className="flex items-start justify-between gap-4 border-b border-line px-7 py-5">
           <div>

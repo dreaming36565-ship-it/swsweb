@@ -30,7 +30,7 @@
 ```bash
 npm run dev --prefix academy     # http://localhost:3100
 npm run build --prefix academy   # 타입체크 (작업 후 필수)
-npm run seed --prefix academy    # DB 초기화 — dev 서버 끈 상태에서만
+npm run seed --prefix academy    # DB 초기화(데모 데이터로 다시) — dev 서버 끈 상태에서만, 실사용 데이터가 생긴 뒤엔 쓰지 말 것
 ```
 
 ## 하드 룰
@@ -42,29 +42,32 @@ npm run seed --prefix academy    # DB 초기화 — dev 서버 끈 상태에서�
    `<input type="time">` 금지.
    **화면 표기는 앱 전체가 오전/오후(12시간제)** — `fmtTime()` / `rangeLabel()` 을 쓴다.
    `toHHMM()` 은 내부용이니 화면에 쓰지 말 것.
-4. **`lib/sr.ts`, `lib/conflicts.ts`, `lib/attendance.ts` 는 순수 함수**로 유지한다. DB 접근은 `lib/repo.ts` 에서만.
-5. **`lib/repo.ts`·`lib/db.ts`·`lib/auth.ts`·`lib/seed.ts` 는 서버 전용.** 클라이언트 컴포넌트에서 import 금지.
+4. **`lib/sr.ts`·`conflicts.ts`·`attendance.ts`·`makeup.ts`·`homework.ts`·`books.ts`·`perm.ts` 는 순수 함수**로 유지한다.
+   DB 접근은 `lib/repo/*`(주제별 파일, `lib/repo.ts` 가 모아 내보냄)에서만. (`seed.ts` 는 예전부터 DB를 인자로 받아 SR 자리를 계산한다)
+5. **`lib/repo.ts`·`lib/repo/*`·`lib/db.ts`·`lib/auth.ts`·`lib/seed.ts` 는 서버 전용.** 클라이언트 컴포넌트에서 import 금지 (`import type` 은 괜찮다).
 6. **`node:sqlite` 는 null 프로토타입 객체를 돌려준다.** 서버 컴포넌트에서 클라이언트로 넘기려면
    `repo.ts` 의 `rows()`/`row()` 헬퍼를 반드시 거칠 것 (평범한 객체로 복사해 준다).
-7. **스키마 변경 시 DB 재생성**이 필요하다(`CREATE TABLE IF NOT EXISTS`, 마이그레이션 없음).
+7. **스키마 변경 = 마이그레이션.** `db.ts` 의 `SCHEMA` 를 고치고 `MIGRATIONS` 끝에 단계를 하나 붙인다(`PRAGMA user_version`). 데이터를 지우지 않는다.
 8. **PC 가로형(Desktop First).** 페이지 컨테이너는 `w-full`, `max-w-[…]` 로 폭을 좁히지 말 것.
 9. **색은 `globals.css` 의 `@theme` 토큰**만 쓴다. 하드코딩 금지.
-   (navy / ink / muted / line / alert / present / late / **srpink**)
+   (navy / ink / muted / line / alert / present / late / **srpink** / now / ok / hw-* / st-*). 돌아가며 쓰는 색 목록(반·선생님·학교급)은 `lib/colors.ts`.
 10. **`@types/node` 는 `^24` 이상 유지** — `node:sqlite` 타입 때문.
 11. HANDOFF.md "바꾸면 안 되는 문구" 의 한국어 UI 카피를 임의로 수정하지 말 것.
 
 ## 도메인 핵심 (자세한 건 HANDOFF.md)
 
 - 강의실 가로축 순서: `SR룸 · 1강 · 2강 · 3강 · 4강 · 대강의실` (부서 공용, `rooms.order_no`)
-- SR 자동배정: **같은 반은 같은 열(세로줄)에 연속 배치**. 알파 강의실이 SR룸일 때만 배정
-- SR 수동 이동: **학생 이용시간 전체가 비어 있는 좌석만** 가능
+- SR 자리: **학생은 그 반의 모든 SR 요일에 같은 자리**(주간 자리), **같은 반은 같은 열**, 고등↔초등 먼 열, 매달 1일 앞으로 당겨 정리. 알파 강의실이 SR룸일 때만
+- SR 자리 바꾸기: **그 반이 SR을 쓰는 모든 요일·시간 동안 비어 있는 자리만**. 바꾸기 = 데스크·관리자, 선생님은 🙋 요청
+- 권한은 **여러 개**(`users.roles`), 로그인 = **한글 이름**. 권한표는 `lib/perm.ts`
 - 출결: 수업·알파 중 **먼저 시작하는 쪽 +2분** → 출석체크(알파 먼저=데스크, 수업 먼저=담당T)
   → 데스크 출결전화(학생 → 학부모 → 카톡) → 결과는 **팝업 없이 알림함**(담당T 본인 반 / 관리자 전체).
   팝업에 "나중에" 없음. 자세한 규칙은 HANDOFF 4.6
 - 출결 알림음: 팝업 시 + **제출 전까지 1분마다 3초**
 - 학생은 이름·소속 반만 관리 (연락처·학교 없음). 학년·사용교재는 **반**이 갖는다
 - 수업 종류: `공통 · 개별 · 정규 · 누적오답 · 알파`. **보강은 수업 종류가 아니다**
-- 보강: 결석 1건마다 보강 여부를 추적한다(횟수제 수강료). `makeups` 테이블, `보강 관리` 탭
+- 보강: 결석 1건마다 보강 여부를 추적한다(횟수제 수강료). `absences` + `absence_rounds`, `보강 관리` 탭. 인정/무단 · 이월 결재 · 보강 입력은 담당T만 (HANDOFF 4.14)
+- 숙제: 빈칸 = 완료, 카운트 2 = 강제 숙제반, 4연속 완료 = 졸업, 분기마다 0부터 (HANDOFF 4.18)
 - 시간표 입력은 **요일 다중 선택** 가능 (월·수·금을 한 번에 생성)
 - 확인창(`useConfirm`)은 **엔터로 확정**된다 — 이 동작을 없애지 말 것
 

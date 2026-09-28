@@ -9,10 +9,10 @@ import { DEPARTMENTS } from "@/lib/types";
 const REMEMBER_KEY = "academy.login.remember";
 
 const DEMO = [
-  { loginId: "yeseul", label: "관리자 안예슬" },
-  { loginId: "nayoung", label: "초중등 최나영" },
-  { loginId: "field", label: "고등 정필드" },
-  { loginId: "desk", label: "데스크 이수민" },
+  { loginId: "안예슬", label: "안예슬 (관리자+선생님)" },
+  { loginId: "최나영", label: "최나영 (선생님)" },
+  { loginId: "정필드", label: "정필드 (고등)" },
+  { loginId: "이수민", label: "이수민 (데스크)" },
 ];
 
 export default function LoginForm() {
@@ -88,18 +88,19 @@ export default function LoginForm() {
         {/* 오른쪽 — 로그인 */}
         <div className="card p-8">
           <h2 className="text-xl font-bold text-ink">로그인</h2>
-          <p className="mt-1 text-sm text-muted">학원 계정으로 로그인해 주세요.</p>
+          <p className="mt-1 text-sm text-muted">아이디 대신 <b>본인 한글 이름</b>을 입력해요.</p>
 
           <form className="mt-6 space-y-4" onSubmit={(e) => void submit(e)}>
             <div>
               <label className="label" htmlFor="loginId">
-                아이디
+                이름
               </label>
               <input
                 id="loginId"
                 className="field"
                 value={loginId}
                 autoComplete="username"
+                placeholder="예) 최나영"
                 onChange={(e) => setLoginId(e.target.value)}
               />
             </div>
@@ -125,13 +126,13 @@ export default function LoginForm() {
                   checked={remember}
                   onChange={(e) => setRemember(e.target.checked)}
                 />
-                아이디 저장
+                이름 저장
               </label>
               <button
                 type="button"
                 className="text-sm text-navy-600 hover:underline"
                 onClick={() =>
-                  setNotice("비밀번호는 관리자에게 문의해 주세요. 설정 › 계정 관리에서 변경할 수 있습니다.")
+                  setNotice("관리자에게 비밀번호 초기화를 부탁하세요 (시간표 › 계정 · 강의실). 초기화하면 1234로 로그인한 뒤 새 비밀번호를 정해요.")
                 }
               >
                 비밀번호 찾기

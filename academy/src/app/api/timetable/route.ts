@@ -1,32 +1,35 @@
-import { numParam, strParam, withUser } from "@/lib/api";
+import { withUser } from "@/lib/api";
 import {
   conflictsForDay,
-  listClasses,
-  listMakeups,
+  listAlertOk,
+  listBookings,
+  listBooks,
+  listClassModels,
   listRooms,
-  listSessions,
-  listSrAssignments,
   listTeachers,
-  type DeptFilter,
+  listTempSwaps,
+  srSnapshot,
+  today,
 } from "@/lib/repo";
-import { dateKey } from "@/lib/time";
+import { minutesOfDay, weekDateOf } from "@/lib/time";
 
-/** 시간표 화면이 필요한 데이터를 한 번에 내려준다 */
-export const GET = withUser(({ req }) => {
-  const day = numParam(req, "day") ?? new Date().getDay();
-  const dept = (strParam(req, "dept") ?? "ALL") as DeptFilter;
+/** 시간표 화면 — 반(칸) · 강의실 · 선생님 · 교재 · 이번 주 교실배정 · 이번 주만 바꾼 순서 · 교실 경고 확인 · SR 자리 */
+export const GET = withUser(() => {
+  const week = [1, 2, 3, 4, 5, 6, 0].map((d) => ({ day: d, date: weekDateOf(d) }));
+  const t = today();
+  const sr = srSnapshot(t);
   return {
-    day,
-    dept,
-    sessions: listSessions(day, dept),
-    // 반 색은 부서 필터와 상관없이 그 요일 전체 반 기준으로 정한다 (SR 화면과 같은 색)
-    dayClassIds: listSessions(day, "ALL").map((s) => s.classId),
+    today: t,
+    nowMin: minutesOfDay(new Date()),
+    week,
+    classes: listClassModels(),
     rooms: listRooms(),
-    classes: listClasses(dept),
-    teachers: listTeachers("ALL"),
-    srAssignments: listSrAssignments(day, dept),
-    conflicts: conflictsForDay(day),
-    // 앞으로 예정된 보강 — 요일이 맞는 것만 시간표에 함께 그린다
-    makeups: listMakeups({ dept, fromDate: dateKey(new Date()), status: "PLANNED" }),
+    teachers: listTeachers().map((u) => ({ id: u.id, name: u.name })),
+    books: listBooks(),
+    bookings: listBookings(t, week[6].date),
+    tempSwaps: listTempSwaps(),
+    alertOk: listAlertOk(),
+    conflicts: week.map((w) => ({ day: w.day, list: conflictsForDay(w.day, w.date) })),
+    seats: sr.seats,
   };
 });

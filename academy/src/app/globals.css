@@ -29,6 +29,30 @@
   --color-srpink: #db2777;
   --color-srpink-soft: #fdf2f8;
 
+  /* 지금 시각 줄 (시간표 · SR) */
+  --color-now: #f97316;
+  /* 인정 · 성공 (초록) */
+  --color-ok: #166534;
+  --color-ok-soft: #dcfce7;
+
+  /* 숙제검사 표시 — 시트와 같은 색 */
+  --color-hw-miss: #fde9b6;
+  --color-hw-miss-ink: #7c4a03;
+  --color-hw-prep: #e9d5ff;
+  --color-hw-prep-ink: #6b21a8;
+  --color-hw-both: #fb923c;
+  --color-hw-both-ink: #431407;
+  --color-hw-bad: #b91c1c;
+  --color-hw-absent: #e5e7eb;
+  --color-hw-absent-ink: #4b5563;
+
+  /* 보강 상태 — 시트와 같은 색 */
+  --color-st-coord: #6d28d9;
+  --color-st-before: #fecdd3;
+  --color-st-before-ink: #9f1239;
+  --color-st-done: #1d4ed8;
+  --color-st-carry: #374151;
+
   --font-sans:
     Pretendard, "Pretendard Variable", -apple-system, BlinkMacSystemFont, "Malgun Gothic",
     "맑은 고딕", system-ui, sans-serif;
@@ -165,4 +189,28 @@ body {
 }
 .fade-in {
   animation: fadeIn 0.2s ease-out;
+}
+
+/* 인쇄 — SR 좌석표 (A4 가로). 화면 틀과 팝업은 인쇄하지 않는다 */
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 6mm;
+  }
+  html,
+  body {
+    background: #fff;
+    height: auto;
+  }
+  .print-page {
+    break-after: page;
+    break-inside: avoid;
+  }
+  .print-page:last-child {
+    break-after: auto;
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
 }

@@ -1,9 +1,10 @@
 // 공통 타입 — 서버/클라이언트 양쪽에서 import 가능해야 한다 (DB 의존 금지).
 
 export type Role = "ADMIN" | "TEACHER" | "DESK";
+export const ROLES: Role[] = ["ADMIN", "TEACHER", "DESK"];
 export type Department = "ELEM" | "HIGH";
-/** 수업 종류 — 보강은 여기 없다. 보강은 `보강 관리` 탭에서 따로 다룬다. */
-export type SessionType = "COMMON" | "INDIVIDUAL" | "REGULAR" | "REVIEW" | "ALPHA";
+/** 수업 종류 — 보강은 여기 없다. HOMEWORK = 숙제반(수업 없이 SR만) */
+export type SessionType = "COMMON" | "INDIVIDUAL" | "REGULAR" | "REVIEW" | "ALPHA" | "HOMEWORK";
 /** 출결 단계 — 1차 출석체크 → 데스크 출결전화 → 끝 */
 export type Stage = "CHECK" | "CALL" | "DONE";
 /** 1차 출석체크를 누가 하는가 — 알파가 먼저 시작하면 데스크, 수업이 먼저면 담당 선생님 */
@@ -18,21 +19,24 @@ export const ROLE_LABEL: Record<Role, string> = {
   DESK: "데스크",
 };
 
+/** "관리자 + 선생님" */
+export const rolesLabel = (roles: Role[]) =>
+  ROLES.filter((r) => roles.includes(r))
+    .map((r) => ROLE_LABEL[r])
+    .join(" + ");
+
+export const hasRole = (u: { roles: Role[] } | null | undefined, r: Role) => !!u && u.roles.includes(r);
+
+/** 선생님은 「이름T」 로 줄여 쓴다. 담당이 없으면 「미정」 */
+export const teacherLabel = (name: string | null | undefined) => (name ? `${name}T` : "미정");
+
 export const SESSION_TYPE_LABEL: Record<SessionType, string> = {
   COMMON: "공통",
   INDIVIDUAL: "개별",
   REGULAR: "정규",
   REVIEW: "누적오답",
   ALPHA: "알파",
-};
-
-/** 보강 진행 상태 */
-export type MakeupStatus = "PLANNED" | "DONE" | "CANCELED";
-
-export const MAKEUP_STATUS_LABEL: Record<MakeupStatus, string> = {
-  PLANNED: "예정",
-  DONE: "완료",
-  CANCELED: "취소",
+  HOMEWORK: "숙제반",
 };
 
 export const STAGE_LABEL: Record<Stage, string> = {
@@ -81,11 +85,14 @@ export type SessionUser = {
   id: number;
   loginId: string;
   name: string;
-  role: Role;
+  /** 권한 여러 개 — 할 수 있는 일은 권한들을 합친 것 */
+  roles: Role[];
   department: Department;
+  /** 처음 비밀번호로 로그인했으면 새 비밀번호를 정해야 한다 */
+  mustChangePw: boolean;
 };
 
-export type Room = { id: number; name: string; orderNo: number; isSr: 0 | 1 };
+export type Room = { id: number; name: string; orderNo: number; isSr: 0 | 1; capacity: number | null };
 
 export type ClassRow = {
   id: number;
@@ -97,6 +104,8 @@ export type ClassRow = {
   roomName: string | null;
   grade: string | null;
   textbook: string | null;
+  /** 직접 입력한 학년의 학교급 (초등·중등·고등) */
+  level: string | null;
   studentCount: number;
 };
 
@@ -117,6 +126,8 @@ export type TimetableSession = {
   className: string;
   department: Department;
   type: SessionType;
+  /** 수업 칸 이름 (수업 · 개별 · TEST …) */
+  label: string | null;
   startMin: number;
   endMin: number;
   alphaStartMin: number | null;
@@ -128,21 +139,65 @@ export type TimetableSession = {
   teacherId: number | null;
   teacherName: string | null;
   studentCount: number;
+  /** 이 날짜만 수업·알파 순서를 바꿨는가 (⇄ 이번 주만) */
+  swapped?: boolean;
 };
 
-export type SrAssignment = {
-  id: number;
-  sessionId: number;
-  studentId: number;
-  studentName: string;
-  classId: number;
-  className: string;
-  dayOfWeek: number;
-  seat: string;
-  startMin: number;
-  endMin: number;
-  isManual: 0 | 1;
+/* ------------------------------------------------------------ 시간표 (반 + 칸) */
+
+/** 반의 칸 — 수업 칸(CLASS) 또는 SR 칸. 칸마다 요일이 다를 수 있다 */
+export type ClassPart = {
+  kind: "CLASS" | "SR";
+  label: string;
+  start: number;
+  end: number;
+  roomId: number | null;
+  roomName: string | null;
+  teacherId: number | null;
+  teacherName: string | null;
+  days: number[];
+  bookIds: number[];
 };
+
+/** 시간표 화면이 쓰는 반 한 개 */
+export type ClassModel = {
+  id: number;
+  name: string;
+  department: Department;
+  type: SessionType;
+  grade: string | null;
+  level: string | null;
+  textbook: string | null;
+  /** 담임(담당) 선생님 */
+  teacherId: number | null;
+  teacherName: string | null;
+  students: { id: number; name: string }[];
+  days: number[];
+  parts: ClassPart[];
+  /** 수업 없이 SR만 쓰는 반 (누적오답 · 숙제반) */
+  srOnly: boolean;
+};
+
+export type Book = { id: number; level: string; grade: string; name: string; createdAt: string };
+
+/** 교실배정 · 사용 표시 (그 날짜 하루만) */
+export type RoomBooking = {
+  id: number;
+  date: string;
+  roomId: number;
+  roomName: string;
+  start: number;
+  end: number;
+  name: string;
+  headcount: number | null;
+  teacherId: number | null;
+  teacherName: string | null;
+};
+
+/** 이번 주 그날만 순서를 바꾼 반 */
+export type TempSwap = { classId: number; day: number; date: string; sessionId: number };
+
+/* ------------------------------------------------------------------ 출결 */
 
 export type AttendanceRecord = {
   id: number;
@@ -152,6 +207,8 @@ export type AttendanceRecord = {
   /** 1차 출석체크에서 "결석 연락 받음" 으로 처리했는가 */
   preNotified: 0 | 1;
   absentReason: string | null;
+  /** 결석 사유 빠른 선택으로 고른 구분 */
+  absentCat: AbsenceCat | null;
   lateReason: string | null;
   /** 도착예정시간 (분) */
   etaMin: number | null;
@@ -170,6 +227,8 @@ export type AttendanceRecord = {
   arrivedAt: number | null;
   /** 연락 안 됨이었다가 나중에 도착해 지각으로 옮겨졌는가 */
   lateArrival: 0 | 1;
+  /** 결석 보강이 끝났으면 그 날짜 (결석관리 "9/23 보강완료") */
+  makeupDoneDate?: string | null;
 };
 
 export type AttendanceEvent = {
@@ -210,10 +269,68 @@ export type CallState = {
   arrived: boolean;
   callResult: "LATE" | "ABSENT" | null;
   reason: string;
+  /** 결석 사유 빠른 선택의 구분 */
+  absentCat: AbsenceCat | null;
   etaMin: number | null;
   /** 도착시간 모름 — 시간이 없어도 지각으로 저장할 수 있다 */
   etaUnknown: boolean;
 };
+
+/* ------------------------------------------------------------------- SR */
+
+/** 📄 미션지 요청 — 담당 선생님 화면에 팝업 */
+export type MissionRequest = {
+  classId: number;
+  className: string;
+  date: string;
+  start: number;
+  end: number;
+  requestedAt: number;
+};
+
+/* ---------------------------------------------------------------- 결석보강 */
+
+/** 결석 구분 — OK 인정 / PERSONAL 개인사유 */
+export type AbsenceCat = "OK" | "PERSONAL";
+/** 알린 때 — PRE 미리 / SAME_DAY 당일 / NONE 무연락 */
+export type AbsenceNotice = "PRE" | "SAME_DAY" | "NONE";
+export type RoundType = "MAKEUP" | "TASK";
+export type RoundState = "PLANNED" | "DONE" | "MISSED";
+
+export type AbsenceRound = {
+  id: number;
+  type: RoundType;
+  date: string | null;
+  startMin: number | null;
+  state: RoundState;
+};
+
+export type Absence = {
+  id: number;
+  studentId: number | null;
+  studentName: string;
+  classId: number | null;
+  className: string;
+  teacherId: number | null;
+  teacherName: string | null;
+  department: Department;
+  date: string;
+  reason: string;
+  cat: AbsenceCat | null;
+  notice: AbsenceNotice | null;
+  paid: boolean;
+  more: boolean;
+  dream: boolean;
+  memo: string;
+  source: string;
+  carryReq: { reason: string; by: string; at: string } | null;
+  carried: { reason: string; by: string; approvedBy: string; at: string } | null;
+  rejected: { by: string; note: string } | null;
+  rounds: AbsenceRound[];
+  log: { text: string; at: string }[];
+};
+
+/* ---------------------------------------------------------------- 알림 등 */
 
 export type Notification = {
   id: number;
@@ -258,47 +375,7 @@ export type StaffUser = {
   id: number;
   loginId: string;
   name: string;
-  role: Role;
+  roles: Role[];
   department: Department;
   active: 0 | 1;
-};
-
-/** 보강 1건 — 정규 시간표와 별개로 특정 날짜에 잡힌다 */
-export type Makeup = {
-  id: number;
-  studentId: number;
-  studentName: string;
-  classId: number | null;
-  className: string | null;
-  department: Department;
-  /** 보강 사유가 된 결석 날짜 (직접 만든 보강이면 null) */
-  absentDate: string | null;
-  /** 보강을 진행하는 날짜 */
-  date: string;
-  startMin: number;
-  endMin: number;
-  roomId: number | null;
-  roomName: string | null;
-  teacherId: number | null;
-  teacherName: string | null;
-  note: string | null;
-  status: MakeupStatus;
-  createdAt: string;
-};
-
-/** 보강이 필요한 결석 — 출결 기록에서 뽑는다. 횟수제 수강료라 빠짐없이 챙겨야 한다. */
-export type PendingAbsence = {
-  date: string;
-  studentId: number;
-  studentName: string;
-  classId: number;
-  className: string;
-  department: Department;
-  teacherId: number | null;
-  teacherName: string | null;
-  reason: string | null;
-  /** 이미 잡힌 보강 */
-  makeupId: number | null;
-  makeupStatus: MakeupStatus | null;
-  makeupDate: string | null;
 };

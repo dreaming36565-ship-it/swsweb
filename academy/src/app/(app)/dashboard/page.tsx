@@ -17,7 +17,7 @@ export default async function DashboardPage() {
   const tasks = listTasks({ assigneeId: user.id });
   const summary = attendanceSummary(today, "ALL");
   const notices = listNotices(user.department, 3);
-  const honorific = user.role === "DESK" ? "님" : " 선생님";
+  const honorific = user.roles.includes("TEACHER") ? " 선생님" : "님";
 
   return (
     <div className="w-full space-y-6">

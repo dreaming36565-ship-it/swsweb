@@ -7,7 +7,7 @@ import { apiGet, apiPost, errorMessage } from "@/lib/http";
 import { DEPARTMENTS, type Department, type Notice, type Notification, type SessionUser } from "@/lib/types";
 
 export default function NoticesClient({ user }: { user: SessionUser }) {
-  const canWrite = user.role === "ADMIN";
+  const canWrite = user.roles.includes("ADMIN");
   const [notices, setNotices] = useState<Notice[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [title, setTitle] = useState("");

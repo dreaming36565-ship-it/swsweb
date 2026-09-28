@@ -34,7 +34,7 @@ export default function Modal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-950/40 p-6 fade-in">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-950/40 p-6 fade-in print:hidden">
       <div
         className="card pop-in flex max-h-[88vh] w-full flex-col overflow-hidden"
         style={{ maxWidth: width }}

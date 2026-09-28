@@ -19,6 +19,13 @@ const PALETTE = [
 
 export type ClassColor = { bg: string; border: string; text: string };
 
+/** 담당 선생님 고유 색 — 전체 반 카드 테두리 (선생님 순서대로 파랑·분홍·보라·초록·주황…) */
+const TEACHER_COLORS = ["#2563EB", "#DB2777", "#7C3AED", "#059669", "#EA580C", "#0891B2", "#CA8A04"];
+export const teacherColor = (index: number) => TEACHER_COLORS[Math.max(0, index) % TEACHER_COLORS.length];
+
+/** 학교급 색 — 초등 · 중등 · 고등 */
+export const LEVEL_COLOR: Record<string, string> = { 초등: "#1E9E5A", 중등: "#1B64DA", 고등: "#7C5CE6", E: "#1E9E5A", M: "#1B64DA", H: "#7C5CE6" };
+
 export function classColor(classId: number): ClassColor {
   return PALETTE[Math.abs(classId) % PALETTE.length];
 }

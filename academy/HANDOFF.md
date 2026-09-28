@@ -20,7 +20,7 @@ academy 폴더의 학원 관리 웹앱을 이어서 개발할 거야.
 - 작업 후 npm run build 로 타입체크하고, 브라우저에서 실제로 눌러 확인할 것
 ```
 
-> **진행 중인 작업이 있다.** 맨 아래 **"15. 진행 중인 작업 (다음 세션에서 이어서)"** 를 먼저 읽을 것.
+> 맨 아래 **"15. 진행 상황"** 의 15.0 · 15.0-1 을 먼저 읽을 것 (2026-09-29 시안 전부 코딩 완료, 사용자 확인 대기).
 
 ---
 
@@ -46,8 +46,10 @@ npm run seed --prefix academy    # DB 삭제 → 다음 실행 때 데모 데이
 
 - 루트의 `학원앱_실행.bat` 더블클릭으로도 실행 가능(설치까지 자동).
 - **`npm run seed` 는 dev 서버를 끈 상태에서 실행**해야 한다. Windows가 DB 파일을 잠근다.
-- 데모 계정 비밀번호는 전부 `1234` — `admin`(관리자 김도현) / `yeseul`(초중등 안예슬) /
-  `nayoung`(초중등 최나영) / `field`(고등 정필드) / `desk`(데스크 이수민)
+  seed = DB를 **지우고** 데모 데이터로 다시 만든다. 실사용 데이터가 생긴 뒤에는 쓰지 말 것 (스키마 변경은 마이그레이션, 10장 3번).
+- 로그인 = **한글 이름** + 비밀번호. 데모 계정 비밀번호는 전부 `1234` —
+  `안예슬`(관리자 + 선생님) / `최나영`(선생님) / `정필드`(고등 선생님) / `이수민`(데스크)
+  새 계정 · 비밀번호 초기화한 계정은 1234로 로그인하면 **새 비밀번호를 정해야** 쓸 수 있다.
 - 데모 데이터: **반·시간은 실제 2026 4분기 시간표**, **학생은 전부 가짜 이름**(`seed.ts` `fakeNames()`).
   실제 학생 이름이 담긴 원본 엑셀(`*.xlsx`)은 `.gitignore` 로 저장소에서 제외한다.
 
@@ -79,22 +81,26 @@ npm run seed --prefix academy    # DB 삭제 → 다음 실행 때 데모 데이
 설정 › 강의실 관리에서 추가·이름수정·순서변경·삭제(SR룸은 삭제 불가).
 
 ### 4.3 SR룸
-4열(A/B/C/D) × 6자리 = **24석**. `A1…A6, B1…B6, C1…C6, D1…D6`.
+4열(A/B/C/D) × 6자리 = **24석**. `A1…A6, B1…B6, C1…C6, D1…D6`. **칠판은 아래**(1번 줄이 칠판 바로 앞) — 화면·인쇄 같은 방향.
 
-### 4.4 SR 자동배정 원칙
-> **같은 반 친구들은 세로줄(같은 열)로 위아래 연속 배치**한다.
+### 4.4 SR 자리 원칙 (2026-09-29 주간 자리로 개편)
+> **학생은 그 반이 SR을 쓰는 모든 요일·시간에 같은 자리.** 같은 반 친구들은 **같은 열(세로줄)**, 앞자리(1번)부터.
 
-- 알파 강의실이 **SR룸인 경우에만** 좌석을 배정한다.
-- 한 열에 다 못 앉히면 최소 개수의 열로 쪼갠다 (best-fit).
-- 배치 순서: 알파 시작이 이른 순 → 인원 많은 반 순.
-- 구현: `src/lib/sr.ts` `autoAssignSeats()` — **DB 의존 없는 순수 함수**.
+- 알파 강의실이 **SR룸인 경우에만** 자리를 준다. 한 열(6석)에 다 못 앉으면 두 열로.
+- **고등과 초등이 같은 시간**이면 최대한 먼 열 (고등 D ↔ 초등 A), 중등은 가운데(B·C).
+- 한 번 정한 자리는 그대로 — 퇴원으로 빈자리가 생겨도 다른 학생은 안 움직인다. **매달 1일에 앞으로 당겨 정리**(월초 자리 정리, 반마다 쓰던 열은 유지. 관리자 버튼도 있음).
+- 사람이 옮긴 자리(`sr_seats.manual`)는 다시 계산해도 그대로.
+- 숙제반은 반 명단 대신 **그 달 신청 학생 + 강제 숙제반 참석 학생**(참석 요일만)이 앉는다.
+- 구현: 규칙 `src/lib/sr.ts` `planSeats()`(순수 함수), 누가 SR을 쓰는지 `seed.ts` `srRoster()`, 저장 `rebuildSrSeats()`.
+  반·학생·시간이 바뀌면 `refreshSr()` 가 새 학생만 앉힌다(기존 자리 유지).
 
-### 4.5 SR 수동 이동 규칙 (핵심)
-> **해당 학생의 SR 이용시간 전체 구간 동안 단 한 번도 다른 배정이 없는 좌석만** 이동 가능.
+### 4.5 SR 자리 바꾸기 규칙 (핵심)
+> **그 반이 SR을 쓰는 모든 요일·시간 동안 단 한 번도 다른 학생이 없는 자리만** 옮길 수 있다.
 
-예) 17:10~18:00 이용 학생에게, 17:10엔 비었지만 17:30부터 다른 학생이 쓰는 좌석은 **이동 불가**.
-색: 핑크 = 이동 가능 / 진한 네이비 = 선택 학생 / 흰색 = 사용 중 / 회색 = 이동 불가.
-구현: `src/lib/sr.ts` `movableSeats()`.
+- 자리 바꾸기 = **데스크·관리자**. 선생님은 **🙋 자리 요청**(오늘만 / 계속 + 사유) → 데스크·관리자 승인/거절(그 사이 자리가 찼으면 승인 불가) → 📝 자리 변경 기록.
+- 색: 핑크 = 옮길 수 있음 / 진한 네이비 = 지금 자리 / 회색 = 안 됨(마우스를 올리면 누가 쓰는지).
+- 구현: `src/lib/sr.ts` `movableSeatsFor()`, 서버 `repo/sr.ts` `srMove()` · `srRequest()` · `srAnswer()`.
+- 그 밖에: **＋ 임시 자리**(보강·자습·TEST·신규TEST, 그날만) · **🏠 하원**(누적오답, 그때부터 오늘 그 자리 빈자리) · **📄 미션지**(4.17) · **🖨 좌석표 인쇄**(A4 가로 2장: 월수금 / 화목토).
 
 ### 4.6 출결 워크플로우 (2026-09-27 개편)
 > 학원 순서: 출석체크 → 학생 전화 → (부재중) 학부모 전화 → (부재중) 어머니께 부재중 카톡.
@@ -145,21 +151,32 @@ npm run seed --prefix academy    # DB 삭제 → 다음 실행 때 데모 데이
   `toHHMM()` 은 내부 저장·비교용이며 화면에 쓰지 말 것.
 - 저장 형식은 여전히 **자정으로부터의 분(minute) 정수**. `toMin()` / `toHHMM()`.
 
-### 4.9 권한
+### 4.9 권한 (한 사람이 여러 개 — 2026-09-29)
+한 사람이 **관리자 · 선생님 · 데스크를 여러 개** 가질 수 있다(`users.roles` = "ADMIN,TEACHER"). 할 수 있는 일 = 권한들을 합친 것.
+실제 관리자 = **안예슬(관리자 + 선생님)**. 계정 · 권한은 시간표 › 「계정 · 강의실」 탭(관리자)에서 체크박스로 고친다.
+
 | 기능 | ADMIN | TEACHER | DESK |
 | --- | :-: | :-: | :-: |
-| 시간표 입력/수정/삭제 | ○ | – | – |
-| 시간표·SR 조회 | ○ | ○ | ○ |
-| SR 좌석 수동 이동 | ○ | ○ | ○ |
-| 출석체크 제출 / 최종 확인 | ○ | 담당 수업만 | – |
+| 시간표 보기 · 학생 찾기 · 엑셀 다운로드 | ○ | ○ | ○ |
+| 반 관리(반 만들기·시간) · 계정 · 강의실 · 명단 엑셀 올리기 | ○ | – | – |
+| 교재 책장 · 반 학생 명단 고치기 · 사용교재 입력 | ○ | ○ | ○ |
+| 알파·수업 순서 바꾸기 | ○ | – | – |
+| 교실배정(빈 교실 찾기) · 사용 표시 | ○ | – | ○ |
+| 교실 경고 확인 완료 | ○ | – | – |
+| SR 자리 보기 | ○ | ○ | ○ |
+| SR 자리 바꾸기 · 요청 승인 | ○ | 요청 | ○ |
+| SR 임시 자리 · 하원 · 미션지 받음/요청 | ○ | – | ○ |
+| 월초 자리 정리 | ○ | – | – |
+| 출석체크 제출 | ○ | 담당 수업만 | 알파 먼저인 반 |
 | 출결전화 저장 | ○ | – | ○ |
-| 반 생성/수정/삭제 | ○ | – | – |
-| 강의실 생성/수정/삭제·순서 | ○ | – | – |
-| 계정 생성/수정/삭제 | ○ | – | – |
-| 학생 명단 추가/수정/삭제 | ○ | – | ○ |
+| 결석 사유 · 알린 때 · 유료 보강 · 결석 미리 등록 | ○ | – | ○ |
+| 인정/개인사유 판정 · 이월 승인 | ○ | – | – |
+| 보강 일정 · 완료 · 이월 요청 · 드림+ | 내 반 | 내 반 | – |
+| 숙제검사 기입 | ○ | 내 반 | ○ |
+| 숙제반 관리(요일 · 인증 · 신청) | ○ | 보기 | ○ |
 | 공지 작성 · 업무 지시 | ○ | – | – |
 
-정의 위치: `src/lib/auth.ts` `PERMISSIONS`
+정의 위치: `src/lib/perm.ts` `PERMISSIONS` (서버·화면 공용, `can(user, "…")`). 설정 화면에도 같은 표가 있다.
 
 ### 4.9.1 학생은 여러 반에 속한다
 - 한 학생이 **정규반(월수/화목) + 개별반(금/토)** 을 함께 다닌다. `student_classes` 다대다 테이블.
@@ -182,29 +199,60 @@ npm run seed --prefix academy    # DB 삭제 → 다음 실행 때 데모 데이
 | 출결 결과 알림 제목 (팝업 아님, 알림함) | `출결사항 확인해주세요.` |
 | 사이드바 메뉴 | `결석관리` (출결관리 아님) |
 | 사이드바 메뉴 | `보강 관리` |
-| 시간표 입력 버튼 | `입력완료` |
+| 반 편집 저장 버튼 (시간표 › 반 관리) | `입력완료` |
+| 미션지 팝업 제목 (선생님) | `미션지 요청` |
+| 미션지 팝업 내용 | `{반이름} 미션지 없습니다. 준비해서 SR로 가져다주세요.` |
+| 미션지 팝업 버튼 | `전달완료` |
 
 ### 4.12 수업 종류
 `공통 · 개별 · 정규 · 누적오답 · 알파` 5종 (`SESSION_TYPE_LABEL`).
 DB 값은 `COMMON`, `INDIVIDUAL`, `REGULAR`, `REVIEW`, `ALPHA`.
 **보강은 수업 종류가 아니다** — 보강은 `보강 관리` 탭에서 날짜 단위로 따로 관리한다(4.14).
 
-### 4.13 시간표 입력의 요일 다중 선택
-같은 수업이 주 2~3회인 경우가 많아, 시간표 입력에서 **요일을 여러 개 선택**하면
-한 번의 `입력완료` 로 그 요일들에 같은 수업이 모두 생성된다.
-수정 모드에서는 요일을 하나만 고를 수 있다(그 수업 1건만 바뀐다).
+### 4.13 요일 다중 선택
+같은 수업이 주 2~3회인 경우가 많아, 반 편집에서 **수업 요일을 여러 개** 고르면 한 번의 `입력완료` 로 그 요일들에 모두 생긴다.
+칸마다 요일을 다르게 둘 수도 있다(예: 월수 수업 + 수요일만 SR).
 
-### 4.14 보강 관리 (핵심)
-> 횟수로 수강료를 받기 때문에 **결석 1건마다 보강이 이루어졌는지** 반드시 추적해야 한다.
+### 4.14 보강 관리 (핵심 — 2026-09-29 결석보강으로 개편)
+> 횟수로 수강료를 받기 때문에(월 12회 / 8회) **결석 1건마다 보강이 이루어졌는지** 반드시 추적해야 한다.
 
-- 사이드바 메뉴명은 **`보강 관리`**.
-- `결석관리`에서 **결석**으로 처리된 건이 자동으로 "보강이 필요한 결석" 목록에 쌓인다.
-- `보강 잡기` → 날짜·시간·강의실·담당 선생님을 넣으면 보강 1건이 등록되고 그 결석과 연결된다
-  (같은 결석에 보강을 두 번 등록할 수 없다).
-- 등록한 보강은 **담당 선생님의 대시보드 "오늘의 일정"** 과 **시간표 관리**(해당 요일, 앰버 점선 블록)에 표시된다.
-- 상태는 `예정 / 완료 / 취소`. 보강을 진행하면 `완료` 로 체크한다.
-- 정규 시간표(`timetable_sessions`)와는 **별도 테이블(`makeups`)** 이다.
-  요일 반복이 아니라 특정 날짜 1회이기 때문.
+- 사이드바 메뉴명은 **`보강 관리`**. 탭: **처리할 것 / 전체 기록(월·상태별) / 미리 등록된 결석 / 월 정산(관리자)**. 숨기기 없음.
+- 결석 1건 = `absences`. **출결에서 저절로** 생긴다(출석체크 결석 연락 · 출결전화 결석 · 결석으로 변경). 출결 기록이 지워져도 남도록 반·담당 이름을 함께 적어 둔다.
+- **인정 / 개인사유**: 학생에게 참석·불참 선택권이 없으면 인정(병결·병원·가족여행·가족행사·경조사·학교 일정·강사 결근),
+  고를 수 있었으면 개인사유 → **무단 → 무료 보강 없음(유료 보강 5,000콩알)**. 병결 외 당일 알림 · 무연락도 무단.
+  사유 빠른 선택(칩)을 고르면 구분이 저절로. 목록에 없는 사유는 「판정 필요」 → **관리자만** 인정/개인사유를 정한다.
+  칩은 출석체크 · 출결전화 팝업 · 결석관리 [결석으로 변경] · 보강 관리에 모두 같다(`components/attendance/ReasonChips.tsx`).
+- **보강 일정 입력 = 그 반 담당T만**(관리자도 자기 반만). 회차 여러 번 · 📄 과제로 대체 · 완료 · **보강 결석**(다음 보강은 유료) · 남은 보강 있음 · 드림플러스 체크(초중등만. 고등부 에듀OK는 중단 → 이 앱에만).
+- **상태는 사람이 고르지 않는다** — 기록에서 저절로: 조율중 / 보강 전 / 보강 완료 / 이월 대기 / 이월 / 무단 (`lib/makeup.ts` `statusOf`).
+- **이월** = 담당T가 최종적으로 보강이 어렵다고 판단 → 요청 → **관리자 승인(결재)해야 확정**, 반려하면 담당T에게 돌아감. 이월 뒤에는 보강하지 않는다. 월말에 저절로 이월되지 않는다.
+- **📅 결석 미리 등록**(데스크·관리자): 학생 + 기간 + 사유 → 그 사이 수업 날짜마다 결석. 그날이 되면 **출석체크 팝업에 「결석 연락」으로 미리 표시**된다.
+- 보강 완료 시 결석관리 화면의 그 결석에 **"9/23 보강완료"** 표시. 담당T 대시보드 "오늘의 일정"에 그날 보강이 뜬다.
+- 시트 기록(`data/makeup.local.json`, git 제외)은 처음 한 번 DB로 옮긴다(2026-09-01 이후 · 보강 완료가 아닌 28건).
+- 예전 `makeups` 테이블 · 「보강 잡기」 화면은 없앴다.
+
+### 4.16 시간표 (2026-09-29 업그레이드)
+- 탭: **선생님별 · 교실별 · 전체 반 · 학생 찾기 · 반 관리 · 교재 책장 · 계정 · 강의실**(뒤 둘 = 관리자). 사이드바 「반 관리」는 없앴다(`/classes` → 반 관리 탭).
+- 반 = **여러 칸(수업 · SR)**, 칸마다 요일 · 교재가 다를 수 있다. 단 **한 요일에는 수업 칸 1개 + SR 칸 1개까지**(출결·SR 자리가 요일마다 한 번이라서). DB는 여전히 「반 × 요일 = 한 줄」(`timetable_sessions`).
+  편집해도 이미 있는 요일의 줄은 그대로 고쳐서 **출결 기록을 지킨다**. 빠진 요일만 지운다.
+- 선생님별 · 교실별: 같은 반 같은 색, 점선 = SR, 빗금 = 교실배정, **주황 선 = 지금 시각**. 교실별에 **경고**(한 교실 2개반 · 정원 초과) → 관리자 「확인 완료」(다음 주에도 유지) + **사용 가능 교실 표**(30분 단위, 「가능」 → 메모 사용 표시).
+- **⇄ 알파·수업 순서 바꾸기**(관리자): 요일 + 반 여러 개(고등부 전체 선택) → **이번 주 그날 하루만**(`session_swaps`, 다음 주 저절로 원래대로) 또는 **계속 적용**. 바꾸면 SR · 출결 시작 시각 · 대시보드가 따라간다. 겹치면 경고.
+- **＋ 교실배정**: 이번 주 그 요일 하루만 빈 교실 찾기 (`room_bookings`).
+- **교재 = 과정(학교급 + 학년-학기) + 교재 이름** — 한 줄 「초등 5-1 심화」, 화면에는 짧게 「5-1 심화」 (`lib/books.ts`).
+- **📥 엑셀 다운로드**(시트 7개, 30분 줄 × 선생님 칸, 반 색) · **📤 명단 엑셀 올리기**(반이름 · 학생이름, 새 학생만 더함) — `exceljs`.
+- 전체 반 카드: 학년 묶음 제목 크게, 5줄(반이름 / 요일·시간 / 학습과정 / 인원 / 담당), 테두리 = 담당 선생님 색.
+
+### 4.17 📄 미션지 (SR)
+- 금·토 개별반과 숙제반을 뺀 **모든 SR(누적오답 포함)은 미션지가 꼭 있어야** 한다.
+- 데스크: SR 실시간 화면에서 반마다 `✅ 받음` / `📣 {이름}T 요청`, 지금 · 30분 안 반 중 없는 반은 위쪽 빨간 줄 + 「모두 요청」.
+- 담당 선생님 화면(어느 메뉴든)에 팝업 + 알림음(뜰 때 3초, 처리할 때까지 1분마다 3초, 「나중에」 없음). **바꾸면 안 되는 문구**(4.11) 참고.
+- 「전달완료」 → 데스크 화면 `📄 미션지 ✅ {이름}T 전달완료`, 선생님 🔔 알림함에도 기록. 기록은 날짜별(`sr_missions`).
+
+### 4.18 숙제검사 · 숙제반 (2026-09-29)
+- 숙제검사 = **초중등만**. 반별 표(학생 × 월수/화목 날짜 + 금·토 개별 칸). 표시: 숙제미흡 0.5 · 준비물 미지참 0.5 · 숙제+준비물 미흡 1 · 숙제불량 2 · 결석(검사 없음). **빈칸 = 완료**. 선생님은 내 반만 기입.
+- 카운트 1.5 = 주황 경고, **2가 되는 날 = 강제 숙제반 자동 시작**(담당T · 데스크 알림). 졸업 = 그 뒤 SR 숙제검사 **4번 연속 완료**(미흡이면 0부터, 결석 건너뜀) → 카운트 0부터. 분기(12~2 / 3~5 / 6~8 / 9~11)마다 0부터. 계산은 `lib/homework.ts` `timeline()`.
+- 강제 숙제반은 **요일별 방법**: 🏫 숙제반 참석 / 📷 사진 인증. 인증 문제(인증 후 SR 미흡 · 미인증) 그 달 1회 = 경고, 2회부터 남은 인증 요일은 참석(🏫!).
+- 신청 숙제반 = 한 달 단위(`hw_apply`, 출결은 올리미). **🔄 설문 응답 불러오기** = 구글 설문 응답 시트 「웹에 게시(CSV)」 주소(설정에서 관리자가 넣음) → 이름·반·요일만 읽음, 연락처 저장 안 함.
+- **지각 3회 → 숙제반 1회**(분기 안 지각을 저절로 셈) → 날짜 정하기 → 그날 SR 임시 자리 저절로 → 다녀옴.
 
 ### 4.15 확인창은 엔터로 확정
 `useConfirm()` 확인창이 뜨면 **확인 버튼에 포커스가 잡히고, 엔터를 누르면 바로 확정**된다(취소는 ESC).
@@ -216,20 +264,20 @@ DB 값은 `COMMON`, `INDIVIDUAL`, `REGULAR`, `REVIEW`, `ALPHA`.
 
 | 경로 | 메뉴 | 파일 |
 | --- | --- | --- |
-| `/login` | 로그인 | `app/login/LoginForm.tsx` |
+| `/login` | 로그인 (한글 이름) | `app/login/LoginForm.tsx` |
 | `/dashboard` | 대시보드 | `app/(app)/dashboard/page.tsx` |
-| `/timetable` | 시간표 관리 | `components/timetable/TimetableClient.tsx` |
-| `/sr` | SR 관리 | `components/sr/SrClient.tsx` |
-| `/classes` | 반 관리 | `components/classes/ClassesClient.tsx` |
+| `/timetable` | 시간표 관리 (관리자) / 시간표 | `components/timetable/*` (`?view=manage` 등으로 탭 바로 열기) |
+| `/sr` | SR 관리 (데스크·관리자) / SR 현황 (선생님) | `components/sr/SrClient.tsx` · `SeatMap.tsx` · `PrintSheet.tsx` |
 | `/attendance` | 결석관리 | `components/attendance/AttendanceClient.tsx` |
 | `/makeup` | 보강 관리 | `components/makeup/MakeupClient.tsx` |
+| `/homework` | 숙제 관리 | `components/homework/HomeworkClient.tsx` |
 | `/notices` | 알림 & 공지 | `components/NoticesClient.tsx` |
 | `/tasks` | 업무 지시 | `components/TasksClient.tsx` |
-| `/settings` | 설정 | `components/settings/SettingsClient.tsx` |
+| `/settings` | 설정 (내 정보 · 비밀번호 · 알림음 · 숙제 설문 주소 · 권한 표) | `components/settings/SettingsClient.tsx` |
 
-- 대시보드: 인사 문구 + **우측 큰 실시간 시계**, 가로 3열(오늘의 일정 / 오늘의 할 일 / 오늘 출결 처리 현황) + 최근 공지 3열
-- 시간표 관리: **왼쪽 입력(300px) / 오른쪽 시간표** 2분할. `입력완료` 하면 오른쪽에 즉시 반영
-- 반 관리: 상단 가로 폼(새 반 만들기) + 넓은 표(인라인 수정/삭제) + 오른쪽 학생 명단
+- `/classes` 는 시간표 「반 관리」 탭으로 넘어간다. 계정 · 강의실 관리도 시간표 「계정 · 강의실」 탭으로 옮겼다.
+- 대시보드: 인사 문구 + **우측 큰 실시간 시계**, 가로 3열(오늘의 일정 / 오늘의 할 일 / 오늘 출결 처리 현황) + 최근 공지 3열.
+  선생님 권한이 있으면 오늘의 일정 = 내 수업 · SR(📄 미션지 필요) · 오늘 보강.
 
 ## 6. 파일 지도
 
@@ -238,92 +286,97 @@ academy/src/
 ├─ app/
 │  ├─ layout.tsx              루트 레이아웃 (Pretendard CDN)
 │  ├─ page.tsx                / → /dashboard 또는 /login 리다이렉트
-│  ├─ globals.css             ★ 디자인 토큰(@theme) + .card/.btn/.field 유틸
-│  ├─ login/                  로그인 화면
+│  ├─ globals.css             ★ 디자인 토큰(@theme) + .card/.btn/.field 유틸 + 인쇄(A4 가로)
+│  ├─ login/                  로그인 화면 (한글 이름)
 │  ├─ (app)/                  로그인 후 라우트 그룹 (layout이 인증 가드)
 │  └─ api/                    REST 엔드포인트 (아래 7장)
 ├─ components/
-│  ├─ AppShell.tsx            ★ 사이드바 + 상단바 + 출결 팝업 호스트 + 오디오 unlock
-│  ├─ BrandLogo.tsx           로고 PNG 없으면 대체 마크
-│  ├─ Combobox.tsx            ★ 선택 + 직접입력(신규 생성) 겸용 입력창
-│  ├─ TimeSelect.tsx          ★ 10분 단위 시각 선택
-│  ├─ ConfirmDialog.tsx       ★ useConfirm() — window.confirm 대체
-│  ├─ UserFormModal.tsx       계정 추가/수정 (아이디 직접 부여)
-│  ├─ Modal.tsx / Icons.tsx / LiveClock.tsx / NotificationBell.tsx / DashboardTasks.tsx
-│  ├─ useAlarmLoop.ts         ★ 1분마다 3초 알림음 루프
-│  ├─ attendance/             출결 팝업 2종(CheckPopup·CallPopup) + PopupFrame + AttendanceHost + ResultTable + 결석관리 페이지
-│  ├─ makeup/                 보강 관리 화면
-│  ├─ classes/ settings/ sr/ timetable/
+│  ├─ AppShell.tsx            ★ 사이드바(권한 합친 메뉴) + 상단바 + 팝업 호스트 + 첫 로그인 비밀번호 정하기
+│  ├─ Modal.tsx / ConfirmDialog.tsx(★ useConfirm) / TimeSelect.tsx(★) / Icons.tsx / NotificationBell.tsx …
+│  ├─ attendance/             출결 팝업(CheckPopup · CallPopup) · MissionPopup(📄 미션지) · ReasonChips(결석 사유 칩) · 결석관리
+│  ├─ timetable/              시간표 — TimetableClient(틀) · views(선생님별·교실별·전체 반·학생 찾기·반 관리) ·
+│  │                          ClassDetail · ClassEditor · ToolModals(⇄ 순서 · 교실배정 · 명단 올리기) · BooksView · StaffView · TimeGrid · model
+│  ├─ sr/                     SR — SrClient · SeatMap · PrintSheet(🖨 A4 가로)
+│  ├─ makeup/                 보강 관리
+│  ├─ homework/               숙제 관리
+│  └─ settings/
 └─ lib/
-   ├─ db.ts                   ★ 스키마 + SQLite 연결 (싱글턴)
-   ├─ seed.ts                 데모 시드 + rebuildSrForDay()
-   ├─ repo.ts                 ★ 모든 도메인 쿼리 + 기준정보 CRUD (가장 큰 파일)
-   ├─ sr.ts                   ★ SR 자동배정 / 이동가능 좌석 (순수 함수)
+   ├─ db.ts                   ★ 스키마 + 마이그레이션(PRAGMA user_version) + SQLite 연결 (싱글턴)
+   ├─ seed.ts                 데모 시드 · 시트 기록 가져오기 · ★ SR 주간 자리 계산(srRoster · rebuildSrSeats) · 숙제 대상 도우미
+   ├─ repo.ts                 ★ repo/ 폴더를 한데 모아 내보냄 (DB 접근은 여기서만)
+   ├─ repo/                   base(도우미·알림·설정) · staff(강의실·계정·교재) · timetable(반·학생·칸·⇄·교실배정) ·
+   │                          sr · attendance · absence(결석보강) · homework · misc(알림·공지·업무·대시보드)
+   ├─ sr.ts                   ★ SR 자리 규칙 — planSeats · movableSeatsFor · seatBlocker (순수 함수)
    ├─ conflicts.ts            ★ 시간표 충돌 감지 (순수 함수)
-   ├─ attendance.ts           ★ 출결 규칙 — 시작 시각·담당, 전화 순서·남은 인원 (순수 함수, 서버·팝업 공용)
-   ├─ auth.ts                 세션 + PERMISSIONS
-   ├─ api.ts                  withUser() 래퍼 + ok()/fail()
+   ├─ attendance.ts           ★ 출결 규칙 (순수 함수, 서버·팝업 공용)
+   ├─ makeup.ts               ★ 결석보강 규칙 — 인정/무단 · 상태 · 처리할 일 (순수 함수)
+   ├─ homework.ts             ★ 숙제 규칙 — 카운트 · 강제 숙제반 · 졸업 · 인증 문제 · 분기 (순수 함수)
+   ├─ books.ts                교재 = 과정 + 이름 (순수 함수)
+   ├─ perm.ts                 ★ 권한표 PERMISSIONS + can() (서버·화면 공용)
+   ├─ auth.ts                 세션 · 로그인 (권한 여러 개)
+   ├─ api.ts                  withUser() 래퍼 + ok()/fail() + requirePermission()
    ├─ http.ts                 클라이언트 fetch 래퍼 (한국어 오류 메시지)
    ├─ errors.ts               AppError / assert()
    ├─ alarm.ts                Web Audio 알림음
-   ├─ time.ts                 분 단위 시간 유틸 + 그리드 상수
+   ├─ time.ts                 분 단위 시간 유틸 · 이번 주 날짜(weekDateOf)
    ├─ types.ts                공통 타입 + DEPARTMENTS/ROLE_LABEL
-   └─ colors.ts               반별 구분 색
+   └─ colors.ts               반별 구분 색 · 선생님 색 · 학교급 색
 ```
 
 ## 7. API 목록
 
 | 메서드 | 경로 | 설명 |
 | --- | --- | --- |
-| POST | `/api/auth/login` `/logout` · GET `/me` | 세션 |
-| GET | `/api/timetable?day=&dept=` | 시간표 + 강의실/반/선생님/SR배정/충돌 한 번에 |
-| POST/PATCH/DELETE | `/api/timetable/session` | 수업 CRUD (ADMIN). POST 는 `days: number[]` 로 여러 요일 동시 생성 |
-| GET | `/api/sr?day=&dept=` | 좌석 배정 |
-| GET | `/api/sr/options?assignmentId=` | 이동 가능 좌석 |
-| POST | `/api/sr/move` · `/api/sr/reset` | 좌석 이동 / 요일 자동배정 재계산 |
-| GET | `/api/attendance/pending` | **4초 폴링** — tick + 내가 처리할 팝업 묶음(`groups`, 같은 시각 반끼리) |
-| POST | `/api/attendance/submit` | `step: CHECK`(1차 체크 제출) · `CALL`(학생 1명 전화 상태 저장) · `CALL_DONE`(출결전화 저장) · `ARRIVE`(나중 도착 토글) · `TO_ABSENT`(결석으로 변경) · `UNDO_ABSENT`(되돌리기) |
-| POST | `/api/attendance/trigger` | `sessionIds[]` 출결 즉시 열기 (같은 시각 반 한 번에) |
-| GET | `/api/attendance/list?date=&dept=` | 결석관리 페이지. `?events=1,2` 면 그 출결만 (알림함 결과 표) |
-| GET/POST/PATCH/DELETE | `/api/makeups?dept=&unfinished=` | 보강 CRUD + 보강이 필요한 결석 목록 |
-| GET/POST/PATCH/DELETE | `/api/classes` | 반 CRUD (payload에 rooms/teachers/students 동봉) |
-| GET/POST/PATCH/DELETE | `/api/rooms` | 강의실 CRUD (`move: -1\|1` 로 순서 변경) |
-| GET/POST/PATCH/DELETE | `/api/users` | 계정 CRUD (ADMIN) |
-| GET/POST/PATCH/DELETE | `/api/students` | 학생 CRUD |
-| GET/POST | `/api/notices` · GET/POST `/api/notifications` · GET/POST/PATCH/DELETE `/api/tasks` | |
+| POST | `/api/auth/login` `/logout` · GET `/me` · POST `/password` | 세션 · 내 비밀번호 바꾸기 |
+| GET | `/api/timetable` | 반(칸) · 강의실 · 선생님 · 교재 · 이번 주 교실배정 · 이번 주만 바꾼 순서 · 경고 확인 · 요일별 충돌 · SR 자리 |
+| POST | `/api/timetable/swap` | ⇄ 순서 바꾸기 `{day, classIds, keep}` / 이번 주만 → `{day, classId, action: UNDO\|KEEP}` |
+| POST/DELETE | `/api/timetable/booking` | 교실배정 · 사용 표시 |
+| POST | `/api/timetable/alert` · `/books` | 교실 경고 확인 · 칸 사용교재 |
+| GET | `/api/timetable/excel` | 📥 주간 시간표 엑셀 |
+| POST | `/api/timetable/roster` | 📤 명단 엑셀 올리기 (form-data: file, apply) |
+| GET/POST/PATCH/DELETE | `/api/classes` | 반 저장(반 + 칸 + 학생) · 명단 고치기(PATCH) · 삭제 |
+| GET/POST/PATCH/DELETE | `/api/books` · `/api/rooms` · `/api/users` · `/api/students` | 기준정보 (users PATCH `resetPassword`) |
+| GET | `/api/sr?date=` | SR 자리 현황 (주간 자리 · 그 날짜 사용 · 임시 자리 · 하원 · 미션지 · 요청 · 기록) |
+| POST | `/api/sr/action` | `MOVE` · `REQUEST` · `ANSWER` · `ADHOC` · `ADHOC_DEL` · `LEAVE` · `MISSION` · `PACK` |
+| GET | `/api/attendance/pending` | **4초 폴링** — tick + 내 출결 팝업 + 📄 미션지 요청 + 월초 자리 정리 |
+| POST | `/api/attendance/submit` | `CHECK` · `CALL` · `CALL_DONE` · `ARRIVE` · `TO_ABSENT` · `UNDO_ABSENT` |
+| POST | `/api/attendance/trigger` | 출결 즉시 열기 |
+| GET | `/api/attendance/list?date=&dept=` | 결석관리 페이지 · `?events=` 알림함 결과 표 |
+| GET/POST | `/api/absences` | 결석보강 — `UPDATE` · `ADD_ROUND` · `ROUND_STATE` · `ROUND_DELETE` · `CARRY_*` · `PRE_REGISTER` · `DELETE`, `?preview=학생&from=&to=` |
+| GET/POST | `/api/homework` | 숙제 — `MARK` · `CERT` · `PLAN` · `FORCED_SLOT` · `SEEN` · `APPLY` · `UNAPPLY` · `LATE_*` · `FORM_*`, `?form=YYYY-MM` 설문 응답 읽기 |
+| GET/POST | `/api/notices` · `/api/notifications` · `/api/tasks` | |
+| GET | `/api/mockup-data` | 시안(public/mockups, git 제외)용 데이터 — 로그인 필요 |
 
 응답 형식은 항상 `{ ok: true, data }` 또는 `{ ok: false, error: "한국어 메시지" }`.
 
 ## 8. DB 스키마
 
 ```
-users(id, login_id UNIQUE, password, name, role, department, active)
-rooms(id, name, order_no, is_sr)
-classes(id, name, department, teacher_id→users, room_id→rooms, grade, textbook)
-students(id, name, department, active)
-student_classes(student_id→students, class_id→classes)  PK(student_id, class_id)
-timetable_sessions(id, day_of_week 0=일, class_id, type, start_min, end_min,
-                   alpha_start_min, alpha_end_min, room_id, alpha_room_id, teacher_id)
-sr_assignments(id, session_id, student_id, day_of_week, seat, start_min, end_min, is_manual)
-attendance_events(id, session_id, date, checker, trigger_min, stage, created_at, updated_at)  UNIQUE(session_id,date)
-attendance_records(id, event_id, student_id, status, pre_notified, absent_reason, late_reason, eta_min, eta_unknown, absent_from,
-                   student_call, student_call_at, parent_call, parent_call_at, kakao_at,
-                   call_result, arrived_at, late_arrival)
-notifications(id, user_id, kind, title, body, link, read_at, created_at)
-tasks(id, assignee_id, created_by, title, done, due_date, created_at)
-notices(id, title, body, department, author_id, created_at)
-makeups(id, student_id, class_id, absent_date, date, start_min, end_min,
-        room_id, teacher_id, note, status, created_at)
+users(id, login_id UNIQUE(=한글 이름), password, name, role(대표), roles("ADMIN,TEACHER"), department, active, must_change_pw)
+rooms(id, name, order_no, is_sr, capacity)
+classes(id, name, department, teacher_id, room_id, grade, textbook, level)
+students(id, name, department, active) · student_classes(student_id, class_id)
+timetable_sessions(id, day_of_week, class_id, type, label, start_min, end_min, alpha_start_min, alpha_end_min, room_id, alpha_room_id, teacher_id)
+books(id, level, grade, name, created_at) · session_books(session_id, book_id) · session_swaps(session_id, date)
+room_bookings(id, date, room_id, start_min, end_min, name, headcount, teacher_id, created_by) · room_alert_ok(key)
+app_settings(key, value)                          sr_packed_month · hw_form_csv_url
+sr_seats(class_id, student_id, seat, manual)      ★ 주간 자리
+sr_seat_today(date, class_id, student_id, seat) · sr_adhoc(id, date, name, student_id, kind, start_min, end_min, seat)
+sr_leave(date, class_id, student_id, at_min) · sr_missions(date, class_id, state, requested_at, done_by_kind, done_at …)
+sr_seat_requests(id, date, class_id, student_id, from_seat, to_seat, scope, reason, requested_by, state …) · sr_log(id, date, at_min, text)
+attendance_events(…, UNIQUE(session_id,date)) · attendance_records(…, absent_cat)
+absences(id, student_id, student_name, class_id, class_name, teacher_id, teacher_name, department, date, reason, cat, notice,
+         paid, more, dream, memo, source, record_id, carry_req_*, carried_*, rejected_*)
+absence_rounds(id, absence_id, type MAKEUP|TASK, date, start_min, state PLANNED|DONE|MISSED) · absence_log(id, absence_id, text)
+hw_marks(student_id, date, mark) · hw_cert(student_id, date, state OK|MISS) · hw_plan(student_id, day, how ATTEND|CERT, slot_class_id)
+hw_forced_slot(student_id, slot_class_id) · hw_apply(student_id, slot_class_id, month) · hw_late(id, student_id, lates, date, slot_class_id, done) · hw_seen
+notifications · tasks · notices
 ```
 
-- `role`: `ADMIN | TEACHER | DESK`
-- `department`: `ELEM | HIGH`
-- `type`: `COMMON | INDIVIDUAL | REGULAR | REVIEW | ALPHA`
-- `checker`: `TEACHER | DESK` (1차 출석체크 담당), `trigger_min`: 출결 시작 시각(수업·알파 중 이른 쪽, 분)
-- `stage`: `CHECK → CALL → DONE`
-- `attendance_records.status`: `UNCHECKED | PRESENT | ABSENT | LATE | NO_CONTACT`
-- `*_call`: `OK`(통화됨) | `MISS`(부재중), `*_at` / `kakao_at` / `arrived_at` / `eta_min`: 분 정수
-- `makeups.status`: `PLANNED | DONE | CANCELED`
+- `type`: `COMMON | INDIVIDUAL | REGULAR | REVIEW(누적오답) | ALPHA | HOMEWORK(숙제반)`. 누적오답 · 숙제반은 수업 없이 SR만(수업 시간 = SR 시간, 강의실 = SR룸).
+- 숙제반은 `student_classes` 를 쓰지 않는다 — 그 달 신청(`hw_apply`) + 강제 숙제반 참석이 SR 명단.
+- `absences.cat`: `OK`(인정) / `PERSONAL`(개인사유) / NULL(판정 필요), `notice`: `PRE` / `SAME_DAY` / `NONE`
+- 예전 `sr_assignments` · `makeups` 테이블은 마이그레이션 1에서 지웠다.
 
 ## 9. 디자인 시스템
 
@@ -336,7 +389,13 @@ makeups(id, student_id, class_id, absent_date, date, start_min, end_min,
 | `alert` / `alert-soft` | 결석·충돌·삭제 (레드) |
 | `present` / `present-soft` | 출석 (블루) |
 | `late` / `late-soft` | 지각 (앰버) |
-| `srpink` / `srpink-soft` | **이동 가능 SR 좌석 (핑크)** |
+| `srpink` / `srpink-soft` | **이동 가능 SR 좌석 (핑크)** · ⇄ 이번 주만 |
+| `now` | 지금 시각 줄 (주황) |
+| `ok` / `ok-soft` | 인정 · 성공 (초록) |
+| `hw-*` | 숙제검사 표시 색 (시트와 같게) |
+| `st-*` | 보강 상태 색 (조율중 · 보강 전 · 보강 완료 · 이월) |
+
+반 색 · 선생님 색 · 학교급 색처럼 **개수만큼 돌아가며 쓰는 색 목록**은 `lib/colors.ts` 에 둔다.
 
 - 커스텀 유틸: `.card` `.btn` `.btn-primary` `.btn-ghost` `.btn-danger` `.field` `.label` `.pop-in` `.fade-in`
 - **PC 가로형** — 페이지 컨테이너는 `w-full`. `max-w-[…]` 로 폭을 좁히지 말 것.
@@ -350,15 +409,19 @@ makeups(id, student_id, class_id, absent_date, date, start_min, end_min,
    크롬에서 "이 페이지에서 추가 대화 상자를 표시하지 않음"을 한 번 체크하면 이후 항상 취소로
    처리되어 버튼이 먹통이 된다(실제로 겪은 버그). `useConfirm()` (`components/ConfirmDialog.tsx`) 사용.
 2. **실패한 요청은 반드시 화면에 사유를 표시**한다. 조용히 무시하지 말 것.
-3. **스키마를 바꾸면 DB를 재생성**해야 한다. `CREATE TABLE IF NOT EXISTS` 라 자동 마이그레이션이 없다.
-   → dev 서버 종료 → `npm run seed` → 재시작.
+3. **스키마를 바꾸면 마이그레이션을 붙인다** (2026-09-29부터). `db.ts` 의 `SCHEMA` 를 고치고, 기존 DB용 단계를
+   `MIGRATIONS` 배열 **끝에** 하나 더 붙인다(칸 추가는 `ensureColumn`). 서버를 다시 켜면 `PRAGMA user_version` 을 보고
+   안 한 단계만 실행한다 — **데이터를 지우지 않는다.** 순서를 바꾸거나 이미 있는 단계를 고치지 말 것.
+   `npm run seed` 는 데모 데이터로 처음부터 다시 만들 때만 (실사용 데이터가 생긴 뒤에는 쓰지 말 것).
 4. **시간은 항상 분(minute) 정수**로 다룬다. 문자열 `"14:40"` 은 UI 입출력에서만.
 5. **시간 입력은 `<TimeSelect>` 만 사용**한다. `<input type="time">` 은 임의 분 단위가 들어간다.
-6. **SR 재계산 타이밍** — 수업 생성/수정/삭제, 학생 추가/반 이동/삭제 시 해당 요일이 자동 재계산되고
-   **그 요일의 수동 이동은 초기화**된다. 의도된 동작이지만 새 기능 만들 때 유의.
-7. **순수 함수 유지** — `sr.ts`, `conflicts.ts` 는 DB를 몰라야 한다. DB 접근은 `repo.ts` 에서만.
-8. **`repo.ts`·`db.ts`·`auth.ts`·`seed.ts` 는 서버 전용**이다. 클라이언트 컴포넌트에서 import 하면 빌드가 깨진다.
-   클라이언트가 쓰는 건 `types.ts` / `time.ts` / `sr.ts` / `colors.ts` / `alarm.ts` / `http.ts` 정도.
+6. **SR 자리 다시 맞추기** — 반·학생·시간·숙제반이 바뀌면 `refreshSr()`(= `rebuildSrSeats`) 를 부른다.
+   **지금 자리는 그대로 두고 새 학생만 앉힌다**(시간이 겹치게 된 자리 · 반에서 빠진 학생 자리만 버림). 앞으로 당겨 정리는 월초에만.
+7. **순수 함수 유지** — `sr.ts` · `conflicts.ts` · `attendance.ts` · `makeup.ts` · `homework.ts` · `books.ts` · `perm.ts` 는 DB를 몰라야 한다.
+   DB 접근은 `lib/repo/*` (+ 예전부터 DB를 인자로 받는 `seed.ts`) 에서만.
+8. **`repo.ts`·`repo/*`·`db.ts`·`auth.ts`·`seed.ts` 는 서버 전용**이다. 클라이언트 컴포넌트에서 import 하면 빌드가 깨진다
+   (`import type` 은 괜찮다 — 예: `import type { SrSnapshot } from "@/lib/repo/sr"`).
+   클라이언트가 쓰는 건 `types.ts` / `time.ts` / `sr.ts` / `makeup.ts` / `homework.ts` / `perm.ts` / `colors.ts` / `alarm.ts` / `http.ts` 정도.
 9. **`node:sqlite` 는 null 프로토타입 객체를 돌려준다.** 그대로 클라이언트 컴포넌트에 넘기면
    React 가 거부한다. `repo.ts` 의 `rows()`/`row()` 헬퍼가 평범한 객체로 복사해 주므로 반드시 그걸 통할 것.
 10. **부서(dept) 필터는 `ALL` 문자열**을 쓴다.
@@ -384,15 +447,18 @@ makeups(id, student_id, class_id, absent_date, date, start_min, end_min,
 - 실시간이 **폴링**(출결 4초, 알림 8초, 결석관리 5초). SSE/WebSocket 아님.
 - 출결 자동 트리거가 접속 중일 때만 동작(위 gotcha 12번). 서버 크론이 필요하면 별도 구현.
 - 수업 종류(공통/개별/누적오답)별 세부 로직 없음 — 라벨과 색만 다름.
-- 보강은 **강의실·선생님 충돌을 검사하지 않는다.** 정규 시간표와 겹쳐도 경고가 뜨지 않는다.
-- 시간표 관리에는 **오늘 이후의 예정 보강**만 그 요일에 표시된다(지난 보강은 보강 관리에서 본다).
+- 보강 회차는 날짜 · 시간만 적는다(강의실 · 끝 시간 없음). 강의실이 필요하면 시간표 「＋ 교실배정」, SR이면 「＋ 임시 자리」.
+- 반 편집: 한 요일에 수업 칸 1개 + SR 칸 1개까지 (시안의 「TEST」 같은 셋째 칸은 안 됨 — 필요하면 교실배정으로).
+- 반 편집에서 요일을 빼면 그 요일 수업 줄이 지워지고, **그 요일의 출결 기록도 함께 지워진다**(결석보강 기록은 남는다).
+- 강제 숙제반 알림은 🔔 알림함으로만 간다(팝업 없음).
+- 구글 설문 응답 불러오기는 설문 질문 제목에 「이름」 「요일(또는 시간)」 이 들어 있어야 한다. 요일 답은 「월수 8시」 처럼 요일 글자 + 시각이면 알아본다.
 - 출결 통계·기간별 리포트·엑셀 내보내기 없음.
 - 모바일 대응 없음(의도적, Desktop First).
 - 자동화 테스트 없음. 브라우저 수동 검증으로만 확인했다.
-- 시간표에서 선생님은 **기존 계정 중에서만** 고를 수 있다(아이디가 필요해서). 반·강의실은 직접 입력으로 새로 만들 수 있다.
+- 시간표에서 선생님은 **선생님 권한이 있는 계정 중에서만** 고를 수 있다. 새 선생님은 「계정 · 강의실」에서 계정부터 만든다.
 
 ### 11.4 아직 확정 안 된 것
-- 역할별 세부 권한 체계 확장 (현재는 3역할 고정)
+- 권한은 3종(관리자 · 선생님 · 데스크)을 여러 개 고르는 방식. 더 잘게 나누는 것은 미정
 - 알림 팝업/알림함의 보관 기간·정리 정책
 
 ---
@@ -411,6 +477,7 @@ makeups(id, student_id, class_id, absent_date, date, start_min, end_min,
 | 8 | **2026-09-27 — 학생 여러 반 소속 + 실제 반 구성.** `students.class_id` 를 없애고 `student_classes` 다대다로 교체. 반 관리에서 기존 학생을 다른 반에 추가 / 이 반에서만 빼기. 데모 데이터를 실제 4분기 반(정규 20개 + 개별 금/토 13개)·시간으로 교체하고 학생은 가짜 이름으로 생성. 직원 데모 계정 정리(안예슬 추가, 박지훈·한서연 제거). 이후 계획: 결석보강관리 보강 → 숙제검사·숙제반 → SR 날짜별 배정 |
 | 9 | **2026-09-27 — 반 색상 통일.** 같은 반의 수업·알파 블록을 **같은 색**으로(알파는 점선 테두리로 구분). 같은 요일 안에서는 반마다 다른 색(`colors.ts` `classColorMap()`, 12색). 색은 부서 필터와 무관하게 그 요일 전체 반 기준(`dayClassIds`)이라 시간표·SR 화면 색이 항상 같다. 시간표에서 같은 칸·같은 시간 블록(SR룸 알파)은 겹치지 않게 **나란히 배치**하고 칸 폭을 그만큼 넓힘 |
 | 10 | **2026-09-27 — 출결 흐름 개편.** 수업·알파 중 먼저 시작하는 쪽 기준으로 1차 체크 담당 결정(알파 먼저=데스크). 같은 시각 반들을 팝업 한 장에 반별로. 결석 연락 받음. 데스크 출결전화를 학생→학부모→카톡 순서 버튼으로(누를 때마다 저장·시각 기록, 다시 누르면 취소). 남은 인원 = 연락 안 닿은 학생만. 팝업 "나중에" 삭제. 선생님 최종확인 팝업 삭제 → 결과는 알림함에만(선생님 본인 반 / 관리자 전체, 펼치면 결과 표). 연락 안 됨 → 나중 도착 시 데스크가 결석관리에서 지각 처리(알림 없음). 상태 `NO_CONTACT` 추가, 단계 `CHECK → CALL → DONE` |
+| 12 | **2026-09-29 — 시안 전부 코딩.** ① 권한 여러 개(`roles`) · 한글 이름 로그인 · 첫 로그인 새 비밀번호 · 마이그레이션 방식(`user_version`) ② 시간표 업그레이드(7개 탭, 반 = 여러 칸, 교재 책장, ⇄ 순서 바꾸기, 교실배정 · 교실 경고, 엑셀) ③ SR 주간 자리(같은 반 같은 열 · 고등↔초등 멀리 · 월초 정리) · 실시간 현황 · 자리 요청/승인 · 임시 자리 · 하원 · 📄 미션지 팝업 · A4 인쇄 ④ 결석보강(결석 자동 기록 · 인정/무단 · 회차 · 이월 결재 · 미리 등록 · 월 정산, 출결 팝업에 사유 칩) ⑤ 숙제검사 · 숙제반(강제 · 신청 · 지각 3회 · 사진 인증) |
 | 11 | **2026-09-27 — 출결 보완.** "지금 열기" 는 실제 출결 시작 시각이 지나야 가능(앞날 불가, 서버에서도 차단). 지각 **도착시간 모름** 버튼. 결석관리 **[결석으로 변경]**(사유 필수, 되돌리기 가능) |
 
 ## 13. 재구축(6회차) 시 달라진 점
@@ -429,33 +496,48 @@ makeups(id, student_id, class_id, absent_date, date, start_min, end_min,
 
 ```bash
 npm run build --prefix academy   # 타입체크
-npm run dev --prefix academy
+npm run dev --prefix academy     # http://127.0.0.1:3100 (localhost 가 안 열리면 127.0.0.1)
 ```
 
-브라우저에서 확인할 핵심 시나리오:
+브라우저에서 확인할 핵심 시나리오 (로그인 = 한글 이름 + 1234):
 
-1. **SR 자동배정** — `admin` 로그인 → SR 관리 → 월요일 / 기준 시각 `17:30` →
-   A열=고1수학A, B열=5A1, C열=5B2, D열=고1영어A 처럼 **반별 세로줄**이면 정상.
-2. **SR 이동 규칙** — 위 화면에서 B1 김서준(17:10~18:00) 클릭 → 이동 가능 좌석이 `A6 B6 C6 D6` 네 곳만
-   핑크로 뜨면 정상. A1~A5는 지금 비어 보여도 이용시간이 겹쳐 이동 불가다.
-3. **출결 워크플로우** — `desk` 로그인 → 결석관리 → 오른쪽 알파 시작 묶음 `지금 열기` → `출석체크해주세요.`
-   (반별 카드, 결석 연락 + 사유 비우면 제출 버튼이 "결석 사유 1명 입력 필요") → `제출 완료` →
-   `출결전화 돌려주세요.` 에서 학생/학부모/카톡 순서·다시 눌러 취소·남은 인원 숫자 확인 → `저장 완료` →
-   `admin` 으로 로그인해 🔔 알림 → 결과 표(반 이름 포함). 연락 안 됨 학생은 결석관리에서 `도착` → 지각.
-   (지금 열기는 시작 시각이 지나야 눌린다. 수업 없는 날이나 시간 전에 확인하려면 시간표에 **지금보다 이른 시각**의
-   임시 수업을 넣고 확인한 뒤 `npm run seed` 로 지운다.)
-4. **알림음 반복** — 팝업을 제출하지 않고 1분 기다리면 다시 3초 울리는지.
-5. **충돌 감지** — 화요일에 5A1 수업을 `3강 15:00~17:00 / 최나영` 으로 하나 더 넣으면
-   상단에 빨간 경고 바로 강의실 중복·선생님 중복 2건이 뜬다. 지우면 0건으로 돌아온다.
+1. **시간표** — `안예슬` → 시간표 관리 → 선생님별(주황 선 = 지금) · 교실별(경고 · 사용 가능 교실) · 전체 반 카드 →
+   카드 누르면 반 상세 → 편집 → `입력완료`. 학생 찾기에서 이름 → 지금 어디 + SR 자리.
+2. **⇄ 순서 바꾸기** — 금요일 H1S 고르고 「이번 주만」 → 블록에 `⇄ 이번 주만`, SR 화면 · 대시보드도 바뀐 시간. 「원래대로」로 되돌리기.
+3. **SR 자리** — SR 관리 → 요일별 자리 배치 → 반마다 한 열(7명 반은 두 열), 칠판은 아래.
+   학생 누르기 → `↔ 자리 바꾸기` → 핑크 자리만 가능(그 반이 SR을 쓰는 모든 요일에 비어 있는 자리).
+   `최나영` 으로 로그인하면 `🙋 자리 요청` → `이수민` 화면 위쪽에 요청 → 승인 → 📝 기록.
+4. **미션지** — `이수민` → SR 실시간(수업 시간에) → `📣 ○○T 요청` → 그 선생님 화면에 「미션지 요청」 팝업 + 알림음 → `전달완료` → 데스크 화면 `✅ ○○T 전달완료`.
+5. **출결 → 보강** — 결석 연락 칩(인정/개인사유) → 보강 관리 「처리할 것」에 저절로. 담당T만 보강 추가 · 완료. 이월 요청 → `안예슬` 승인.
+   📅 결석 미리 등록 → 그날 출석체크 팝업에 「결석 연락 ✓」 + 사유가 미리 채워져 있음.
+6. **숙제** — 숙제 관리 → 숙제검사 칸에서 「불량」 고르면 카운트 2 → 「강제 숙제반 자동 등록」 → 숙제반 현황에 줄이 생김.
+7. **알림음 반복** — 팝업을 제출하지 않고 1분 기다리면 다시 3초 울리는지.
 
-끝나면 `npm run seed` 로 데모 데이터를 되돌려 두면 깔끔하다.
+수업 없는 시간에 출결을 확인하려면 시간표에 **지금보다 이른 시각**의 임시 반을 만들고 확인한 뒤 지운다(또는 `npm run seed`).
+끝나면 `npm run seed` 로 데모 데이터를 되돌려 두면 깔끔하다 (실사용 전에만).
 
 ---
 
-## 15. 진행 중인 작업 (다음 세션에서 이어서)
+## 15. 진행 상황 (다음 세션에서 이어서)
 
-> 2026-09-27 기준. 사용자는 프로그래밍 초보자이고, 대화 규칙·작업 방식은 루트 `CLAUDE.md` 를 따른다
+> 사용자는 프로그래밍 초보자이고, 대화 규칙·작업 방식은 루트 `CLAUDE.md` 를 따른다
 > (한국어, 쉬운 용어 풀이, **새 구조는 그림 먼저 → "코딩해줘" 요청 후 코딩**, 배포는 허락 후).
+
+### 15.0 2026-09-29 — 시안 전부 코딩 완료 (12회차)
+사용자가 시안을 보고 "코딩해줘" → 합의한 순서대로 전부 진짜 앱에 옮겼다: **권한 여러 개 · 한글 이름 로그인 → 시간표 → SR 자리 → 결석보강 → 숙제검사·숙제반**.
+확정 규칙은 4.4 · 4.5 · 4.9 · 4.14 · 4.16 ~ 4.18 에 옮겨 적었다. 아래 15.2 이후는 결정 과정 기록(참고용).
+
+- 시안에서 **바꾼 점**(사용자 확인 필요): 반 편집 저장 버튼 = `입력완료`(바꾸면 안 되는 문구라 유지) ·
+  한 요일에 수업 칸 1개 + SR 칸 1개까지 · 강의실 최대 인원은 비워 둠(관리자가 「계정 · 강의실」에서 넣기) ·
+  대시보드 이름은 그대로 「대시보드」(시안의 「내 화면」 대신) · 강제 숙제반 알림은 알림함만.
+- 데모 DB는 이 컴퓨터의 실제 명단(`data/roster.local.json`) + 시트 기록(`makeup.local.json` · `homework.local.json`)으로 만든다.
+  `homework.local.json` 에 10월 신청 2명(`apply`)을 옮겨 적었다 (시안 코드에 있던 것).
+
+### 15.0-1 다음에 할 일
+1. **사용자 확인** — 실제로 눌러 보고 고칠 점 받기 (위 「바꾼 점」 포함).
+2. 실사용 시작 전: 로고 파일, 강의실 최대 인원, 계정(실제 직원) 만들기 → 데모 데이터 대신 실제 데이터로.
+3. **배포 준비**(허락 받은 뒤): Supabase(PostgreSQL)로 저장소 바꾸기 — DB 접근이 `lib/repo/*`(+ `seed.ts` 의 SR 계산)에 모여 있다. 비밀번호 해시.
+4. 보류: SR 날짜별 배정(15.3-4), 스파이더 진도 관리(제외 결정).
 
 ### 15.1 목표
 학원이 구글 스프레드시트로 하던 **시간표 · SR좌석표 · 숙제검사 · 숙제반 관리 · 결석보강관리** 를 전부 이 앱으로 옮긴다.
@@ -585,3 +667,31 @@ npm run dev --prefix academy
 - 강제 숙제반은 **요일별 방법**: 🏫 숙제반 참석(그 요일 숙제반 칸) / 📷 사진 인증(수업 당일 자정까지 오픈채팅). 예) 월 🏫 · 화목 📷. 성공 판정은 어느 쪽이든 SR 숙제검사.
 - 인증 요일 칸: 데스크가 눌러서 📷 인증됨 / 📷✗ 미인증 기록 (지난 날인데 기록 없으면 📷? 확인 필요).
 - **인증 문제**(인증 후 다음 SR 검사 미흡, 또는 미인증): 그 달 **1회 = 경고, 2회부터 = 그 달 남은 인증 요일은 숙제반 참석(🏫!)**. 다음 달은 다시 인증 가능.
+
+### 15.11 사용자 답 (2026-09-29)
+- **SR 자리 바꾸기 = 데스크·관리자만.** 선생님은 🙋 자리 요청만.
+- **자발적 숙제반 신청 = 제안 1 확정**: 설문 응답 시트를 「웹에 게시(CSV)」 → 앱이 자동으로 불러오기. 설문엔 이름·반·요일만.
+
+### 15.12 결석보강 (2026-09-29) — ✅ 코딩 완료 (4.14)
+- 지금 쓰는 시트: 구글 「결석보강 관리(2026)」 월별 탭. 열 = 이름·반·수업담당T·결석사유·결석일자(데스크) / 보강일시·보강진행 여부(보강 전·보강일정 조율중·보강 완료)·드림플러스보강기록·에듀OK보강기록(담당T) / 특이사항.
+- 수강료는 **월 12회 또는 8회**. 결석 → 보강해야 수강료 그대로. 보강 안 되면 그 회차 금액 **다음 달로 이월**. **개인사유(예: 친구 생일)는 불인정 → 유료보강**.
+- 문제: 완료 줄을 데스크가 **행 숨기기** → 나중에 대조하려면 숨김을 풀어야 함. 월 탭은 앞 탭을 복사해 만들어서 작년 10월~올해 2월 줄이 숨긴 채 딸려 있다
+  (그중 1월 결석 「보강 전」 34·「조율중」 12). 그 달 결석 중 완료 안 된 채 숨겨진 줄은 달마다 1~5개.
+- 사용자 답: **이월 = 담당T가 최종적으로 보강 진행이 어렵다고 판단한 회차**(학부모 홀딩 요청, 시간 조정 불가 등. 95% 이상은 보강함). 이월 뒤에는 보강하지 않는다.
+  월말까지 못 끝났다고 저절로 이월되지 않는다.
+- 학원 규칙(블로그 「유투엠 규칙」): **병결 외 사유의 당일 결석 통보 = 무단 결석 → 무료 보강 없음**, 원하면 **유료 보강(5,000콩알 / 현금이면 1회 수강료)**.
+  **잡아 둔 보강에 결석하면 다음 보강은 유료(콩알 차감)**.
+- **인정 / 개인사유 기준 (확정)**: 학생에게 참석·불참 **선택권이 없으면 인정**(갑자기 아픔·병원, 보호자가 정한 가족여행·가족행사·경조사, 학교 일정, 학원 사정=강사 결근).
+  **학생이 고를 수 있었으면 개인사유 → 무단 → 유료 보강**(친구 생일파티, 다른 학원, 개인 약속). 미리 알렸어도 개인사유는 무단.
+- **이월 = 담당T 요청 → 관리자 승인(결재)해야 확정.** 반려하면 담당T에게 돌아감.
+- **결석 기록은 출결에서 자동**(데스크 입력 없음 — 데스크·관리자는 사유·구분만 고침). **보강 일정 입력은 그 반 담당T만**(관리자도 자기 반만).
+- **기존 시트 기록 이관 = 2026-09-01 이후 · 보강 완료가 아닌 것만, 월별로**(그 전 기록은 버림) → 28건(9~11월). 탭 복사로 겹친 줄은 가장 최근 탭 기준, 연도는 요일로 판별.
+  시트의 상태 빈칸 줄은 줄 띄우기용이라 의미 없음(11월 한 학생 가족여행 6건은 미리 등록된 결석이라 남김).
+- **판정 권한**: 데스크는 사유 버튼을 고르면 구분이 저절로 정해짐. 목록에 없는 사유(직접 입력)는 「판정 필요」 → **인정/개인사유 결정·변경은 관리자만**.
+- 코딩 때 할 것: 출석체크·출결전화 팝업의 결석 사유 입력에 **인정/개인사유 빠른 선택**(시안 makeup.html 의 사유 칩과 같게).
+- **에듀OK(고등부) 보강 기록은 중단** → 이 앱에만 기록. 드림플러스(초중등)는 체크 유지.
+- 시트에 미리 알린 결석(10·11월 가족여행 등)이 이미 적혀 있다 → 「결석 미리 등록」 필요.
+- 시안: `public/mockups/makeup.html` (데이터 = `data/makeup.local.json`, git 제외, 시트 7~11월 탭의 그 달 결석만 → `/api/mockup-data` 의 `makeup`).
+  탭: 처리할 것 / 전체 기록(월·상태별) / 미리 등록된 결석 / 월 정산(관리자). 결석 1건 창 = 결석(데스크: 사유·알린 때·인정/무단·💰유료) +
+  보강(담당T: 회차 여러 번·과제로 대체·완료·보강 결석·남은 보강 있음·드림+·이월) + 메모 + 변경 기록. 상태는 기록에서 저절로 정해짐.
+  → 사용자가 "코딩해줘" → 12회차에 구현.

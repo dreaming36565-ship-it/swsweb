@@ -26,6 +26,7 @@ export function callStateOf(r: AttendanceRecord): CallState {
     arrived: r.arrivedAt !== null,
     callResult: r.callResult,
     reason: (r.callResult === "LATE" ? r.lateReason : r.absentReason) ?? "",
+    absentCat: r.callResult === "ABSENT" ? r.absentCat : null,
     etaMin: r.etaMin,
     etaUnknown: r.etaUnknown === 1,
   };
@@ -60,8 +61,10 @@ export function normalizeCall(c: CallState): CallState {
   if (!isReached(next)) {
     next.callResult = null;
     next.reason = "";
+    next.absentCat = null;
     next.etaMin = null;
   }
+  if (next.callResult !== "ABSENT") next.absentCat = null;
   if (next.callResult !== "LATE") {
     next.etaMin = null;
     next.etaUnknown = false;

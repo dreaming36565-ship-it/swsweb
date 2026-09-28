@@ -1,64 +1,27 @@
-import { readJson, requirePermission, strParam, withUser } from "@/lib/api";
+import { readJson, requirePermission, withUser } from "@/lib/api";
 import { assert } from "@/lib/errors";
-import {
-  createClass,
-  deleteClass,
-  listClasses,
-  listRooms,
-  listStudents,
-  listTeachers,
-  updateClass,
-  type DeptFilter,
-} from "@/lib/repo";
+import { deleteClass, listClasses, saveClass, syncRoster, type ClassInput } from "@/lib/repo";
 
-/** 반 관리 화면이 필요한 데이터를 한 번에 내려준다 */
-export const GET = withUser(({ req }) => {
-  const dept = (strParam(req, "dept") ?? "ALL") as DeptFilter;
-  return {
-    dept,
-    classes: listClasses(dept),
-    rooms: listRooms(),
-    teachers: listTeachers("ALL"),
-    // 다른 부서 학생도 개별반에 넣을 수 있도록 학생은 전체를 내려준다
-    students: listStudents("ALL"),
-  };
-});
+export const GET = withUser(() => ({ classes: listClasses("ALL") }));
 
-type Body = {
-  id?: number;
-  name?: string;
-  department?: string;
-  teacherId?: number | null;
-  roomId?: number | null;
-  grade?: string | null;
-  textbook?: string | null;
-};
-
+/** 반 저장 (새 반 / 편집) — 반 정보 + 칸 + 학생 (관리자) */
 export const POST = withUser(async ({ user, req }) => {
-  requirePermission(user, "classes.write");
-  const body = await readJson<Body>(req);
-  return {
-    id: createClass({
-      name: body.name ?? "",
-      department: body.department ?? "ELEM",
-      teacherId: body.teacherId ?? null,
-      roomId: body.roomId ?? null,
-      grade: body.grade ?? null,
-      textbook: body.textbook ?? null,
-    }),
-  };
+  requirePermission(user, "timetable.write");
+  const body = await readJson<ClassInput>(req);
+  return { id: saveClass(body) };
 });
 
+/** 반 학생 명단 고치기 — 관리자 · 선생님 · 데스크 */
 export const PATCH = withUser(async ({ user, req }) => {
-  requirePermission(user, "classes.write");
-  const body = await readJson<Body>(req);
+  requirePermission(user, "students.write");
+  const body = await readJson<{ id?: number; students?: string[] }>(req);
   assert(body.id, "반을 찾을 수 없습니다.");
-  updateClass(body.id, body);
+  syncRoster(body.id, body.students ?? []);
   return null;
 });
 
 export const DELETE = withUser(async ({ user, req }) => {
-  requirePermission(user, "classes.write");
+  requirePermission(user, "timetable.write");
   const body = await readJson<{ id?: number }>(req);
   assert(body.id, "반을 찾을 수 없습니다.");
   deleteClass(body.id);

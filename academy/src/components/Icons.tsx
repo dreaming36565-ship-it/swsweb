@@ -161,3 +161,30 @@ export const IconCheck = ({ className }: Props) => (
     <path d="m5 12 5 5L20 7" />
   </svg>
 );
+
+export const IconBook = ({ className }: Props) => (
+  <svg {...base(className)}>
+    <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z" />
+    <path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5" />
+    <path d="M8 7h8M8 11h6" />
+  </svg>
+);
+
+export const IconDownload = ({ className }: Props) => (
+  <svg {...base(className)}>
+    <path d="M12 3v12M7 10l5 5 5-5M4 21h16" />
+  </svg>
+);
+
+export const IconUpload = ({ className }: Props) => (
+  <svg {...base(className)}>
+    <path d="M12 21V9M7 14l5-5 5 5M4 3h16" />
+  </svg>
+);
+
+export const IconPrinter = ({ className }: Props) => (
+  <svg {...base(className)}>
+    <path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2" />
+    <rect x="6" y="14" width="12" height="7" rx="1" />
+  </svg>
+);

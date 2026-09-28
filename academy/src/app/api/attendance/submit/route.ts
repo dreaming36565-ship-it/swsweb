@@ -1,15 +1,7 @@
 import { readJson, withUser } from "@/lib/api";
 import { assert } from "@/lib/errors";
-import {
-  completeCall,
-  markAbsent,
-  submitCheck,
-  toggleLateArrival,
-  undoMarkAbsent,
-  updateCall,
-  type CheckInput,
-} from "@/lib/repo";
-import type { CallState } from "@/lib/types";
+import { completeCall, markAbsent, submitCheck, toggleLateArrival, undoMarkAbsent, updateCall, type CheckInput } from "@/lib/repo";
+import type { AbsenceCat, CallState } from "@/lib/types";
 
 type Body =
   /** ① 1차 출석체크 제출 */
@@ -21,7 +13,7 @@ type Body =
   /** ④ 나중 도착 — 연락 안 됨 / 도착시간 모름 지각 (다시 누르면 취소) */
   | { step: "ARRIVE"; recordId: number }
   /** 결석으로 변경 (사유 필수) / 되돌리기 */
-  | { step: "TO_ABSENT"; recordId: number; reason: string }
+  | { step: "TO_ABSENT"; recordId: number; reason: string; cat?: AbsenceCat | null }
   | { step: "UNDO_ABSENT"; recordId: number };
 
 export const POST = withUser(async ({ user, req }) => {
@@ -42,7 +34,7 @@ export const POST = withUser(async ({ user, req }) => {
       return null;
     case "TO_ABSENT":
       assert(body.recordId, "학생 출결 정보를 찾을 수 없습니다.");
-      markAbsent(user, body.recordId, body.reason ?? "");
+      markAbsent(user, body.recordId, body.reason ?? "", body.cat ?? null);
       return null;
     case "UNDO_ABSENT":
       assert(body.recordId, "학생 출결 정보를 찾을 수 없습니다.");

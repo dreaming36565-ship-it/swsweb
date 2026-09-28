@@ -6,13 +6,13 @@ import { useCallback, useEffect, useState } from "react";
 import { useConfirm } from "./ConfirmDialog";
 import { IconTrash } from "./Icons";
 import { apiDelete, apiGet, apiPatch, apiPost, errorMessage } from "@/lib/http";
-import { ROLE_LABEL, type SessionUser, type StaffUser, type Task } from "@/lib/types";
+import { rolesLabel, type SessionUser, type StaffUser, type Task } from "@/lib/types";
 
 type Payload = { tasks: Task[]; users: StaffUser[] };
 
 export default function TasksClient({ user }: { user: SessionUser }) {
   const confirm = useConfirm();
-  const isAdmin = user.role === "ADMIN";
+  const isAdmin = user.roles.includes("ADMIN");
 
   const [scope, setScope] = useState<"mine" | "all">("mine");
   const [data, setData] = useState<Payload | null>(null);
@@ -91,7 +91,7 @@ export default function TasksClient({ user }: { user: SessionUser }) {
                 <option value="">선택</option>
                 {(data?.users ?? []).map((u) => (
                   <option key={u.id} value={u.id}>
-                    {u.name} ({ROLE_LABEL[u.role]})
+                    {u.name} ({rolesLabel(u.roles)})
                   </option>
                 ))}
               </select>

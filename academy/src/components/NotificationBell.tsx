@@ -150,7 +150,7 @@ export default function NotificationBell({ user }: { user: SessionUser }) {
                         ) : detail === null ? (
                           <p className="text-sm text-muted">불러오는 중…</p>
                         ) : (
-                          <ResultTable events={detail} showClass={user.role === "ADMIN" || detail.length > 1} />
+                          <ResultTable events={detail} showClass={user.roles.includes("ADMIN") || detail.length > 1} />
                         )}
                       </div>
                     ) : null}

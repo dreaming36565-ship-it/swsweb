@@ -6,12 +6,13 @@
 
 import { useState } from "react";
 import PopupFrame, { WhoBadge } from "./PopupFrame";
+import ReasonChips from "./ReasonChips";
 import { useAlarmLoop } from "../useAlarmLoop";
 import { apiPost, errorMessage } from "@/lib/http";
 import { fmtTime, rangeLabel } from "@/lib/time";
-import type { AttendanceGroup, SessionUser } from "@/lib/types";
+import { hasRole, type AbsenceCat, type AttendanceGroup, type SessionUser } from "@/lib/types";
 
-type Draft = { present: boolean; pre: boolean; reason: string };
+type Draft = { present: boolean; pre: boolean; reason: string; cat: AbsenceCat | null };
 const keyOf = (eventId: number, studentId: number) => `${eventId}-${studentId}`;
 
 export default function CheckPopup({
@@ -27,13 +28,20 @@ export default function CheckPopup({
   onToggleMute: () => void;
   onDone: () => void;
 }) {
-  const [draft, setDraft] = useState<Record<string, Draft>>({});
+  // 미리 등록된 결석은 「결석 연락」 + 사유가 채워진 채로 시작한다
+  const [draft, setDraft] = useState<Record<string, Draft>>(() => {
+    const init: Record<string, Draft> = {};
+    for (const e of group.events)
+      for (const r of e.records)
+        if (r.preNotified) init[keyOf(e.id, r.studentId)] = { present: false, pre: true, reason: r.absentReason ?? "", cat: r.absentCat };
+    return init;
+  });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useAlarmLoop(true, muted);
 
-  const EMPTY: Draft = { present: false, pre: false, reason: "" };
+  const EMPTY: Draft = { present: false, pre: false, reason: "", cat: null };
   const get = (k: string): Draft => draft[k] ?? EMPTY;
   /** 항상 최신 상태를 기준으로 바꾼다 — 빠르게 연달아 눌러도 클릭이 사라지지 않게 */
   const set = (k: string, change: (cur: Draft) => Partial<Draft>) =>
@@ -51,7 +59,10 @@ export default function CheckPopup({
     setDraft((d) => {
       const next = { ...d };
       const ev = group.events.find((e) => e.id === eventId);
-      for (const r of ev?.records ?? []) next[keyOf(eventId, r.studentId)] = { present: true, pre: false, reason: "" };
+      for (const r of ev?.records ?? []) {
+        const k = keyOf(eventId, r.studentId);
+        if (!next[k]?.pre) next[k] = { present: true, pre: false, reason: "", cat: null };
+      }
       return next;
     });
 
@@ -65,7 +76,7 @@ export default function CheckPopup({
           eventId: e.id,
           records: e.records.map((r) => {
             const d = get(keyOf(e.id, r.studentId));
-            return { studentId: r.studentId, present: d.present, preNotified: d.pre, absentReason: d.reason };
+            return { studentId: r.studentId, present: d.present, preNotified: d.pre, absentReason: d.reason, absentCat: d.cat };
           }),
         })),
       });
@@ -83,7 +94,7 @@ export default function CheckPopup({
       heading="출석체크해주세요."
       subtitle={
         <>
-          <WhoBadge>{user.role === "DESK" ? "데스크" : `${user.name} 선생님`}</WhoBadge>
+          <WhoBadge>{isDesk && hasRole(user, "DESK") ? "데스크" : `${user.name} 선생님`}</WhoBadge>
           {fmtTime(group.triggerMin)} {isDesk ? "알파" : "수업"} 시작 · {group.events.length}개 반 · {total}명
         </>
       }
@@ -164,7 +175,7 @@ export default function CheckPopup({
                               className={`btn shrink-0 px-2 py-0.5 text-xs ${
                                 d.pre ? "border-alert bg-alert text-white hover:bg-alert" : ""
                               }`}
-                              onClick={() => set(k, (c) => ({ pre: !c.pre, reason: "" }))}
+                              onClick={() => set(k, (c) => ({ pre: !c.pre, reason: "", cat: null }))}
                               title="학부모에게 미리 결석 연락을 받았어요 (다시 누르면 취소)"
                             >
                               {d.pre ? "결석 연락 ✓" : "결석 연락"}
@@ -172,16 +183,19 @@ export default function CheckPopup({
                           ) : null}
                         </div>
                         {d.pre ? (
-                          <input
-                            className={`field mt-2 ${d.reason.trim() ? "" : "border-late"}`}
-                            placeholder="결석 사유 (필수) 예) 가족여행"
-                            value={d.reason}
-                            onChange={(ev) => {
-                              const reason = ev.target.value;
-                              set(k, () => ({ reason }));
-                            }}
-                            autoFocus
-                          />
+                          <>
+                            <input
+                              className={`field mt-2 ${d.reason.trim() ? "" : "border-late"}`}
+                              placeholder="결석 사유 (필수) — 아래에서 고르거나 직접 입력"
+                              value={d.reason}
+                              onChange={(ev) => {
+                                const reason = ev.target.value;
+                                set(k, () => ({ reason, cat: null }));
+                              }}
+                              autoFocus={!d.reason}
+                            />
+                            <ReasonChips size="xs" value={d.reason} onPick={(reason, cat) => set(k, () => ({ reason, cat }))} />
+                          </>
                         ) : null}
                       </div>
                     );

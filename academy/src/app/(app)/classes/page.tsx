@@ -1,9 +1,6 @@
-import { getSessionUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import ClassesClient from "@/components/classes/ClassesClient";
 
-export default async function Page() {
-  const user = await getSessionUser();
-  if (!user) redirect("/login");
-  return <ClassesClient user={user} />;
+/** 반 관리는 시간표 화면의 「반 관리」 탭으로 옮겼다 */
+export default function Page() {
+  redirect("/timetable?view=manage");
 }

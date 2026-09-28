@@ -115,3 +115,25 @@ export function formatClock(d: Date): string {
 export function minutesOfDay(d: Date): number {
   return d.getHours() * 60 + d.getMinutes();
 }
+
+/** 이번 주(월요일 시작)의 그 요일 날짜 — 일요일은 그 주의 마지막 날 */
+export function weekDateOf(day: number, base = new Date()): string {
+  const diff = ((day + 6) % 7) - ((base.getDay() + 6) % 7);
+  return dateKey(new Date(base.getFullYear(), base.getMonth(), base.getDate() + diff));
+}
+
+/** 날짜에 n일 더하기 (YYYY-MM-DD) */
+export function addDaysKey(key: string, n: number): string {
+  const d = parseDateKey(key);
+  d.setDate(d.getDate() + n);
+  return dateKey(d);
+}
+
+/** 9/28 */
+export const monthDay = (key: string) => `${Number(key.slice(5, 7))}/${Number(key.slice(8, 10))}`;
+
+/** 9/28(월) — 올해가 아니면 25.9/28(월) */
+export function monthDayWeek(key: string, thisYear = new Date().getFullYear()): string {
+  const y = Number(key.slice(0, 4));
+  return `${y === thisYear ? "" : `${key.slice(2, 4)}.`}${monthDay(key)}(${DAY_LABELS[parseDateKey(key).getDay()]})`;
+}

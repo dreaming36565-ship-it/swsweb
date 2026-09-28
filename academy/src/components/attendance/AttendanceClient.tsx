@@ -6,11 +6,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { reasonText, statusChipClass, statusText, contactLog } from "./ResultTable";
+import ReasonChips from "./ReasonChips";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
 import { canMarkAbsent, triggerOf } from "@/lib/attendance";
 import { dateKey, fmtTime, minutesOfDay, rangeLabel } from "@/lib/time";
 import {
   STAGE_LABEL,
+  type AbsenceCat,
   type AttendanceEvent,
   type AttendanceRecord,
   type Department,
@@ -91,7 +93,7 @@ export default function AttendanceClient({ user }: { user: SessionUser }) {
     return [...map.values()].sort((a, b) => a.triggerMin - b.triggerMin);
   }, [data]);
 
-  const canArrive = user.role === "ADMIN" || user.role === "DESK";
+  const canArrive = user.roles.includes("ADMIN") || user.roles.includes("DESK");
 
   // 실제 시간이 되어야 열 수 있다 — 오늘은 출결 시작 시각이 지나야, 앞날은 불가 (5초마다 다시 그려져 시간이 되면 풀린다)
   const today = dateKey(new Date());
@@ -258,6 +260,7 @@ function RecordActions({
 }) {
   const [asking, setAsking] = useState(false);
   const [reason, setReason] = useState("");
+  const [cat, setCat] = useState<AbsenceCat | null>(null);
   const small = "btn px-2.5 py-1 text-xs";
 
   const arrivedLater = record.lateArrival === 1 || (record.status === "LATE" && record.etaUnknown === 1 && record.arrivedAt !== null);
@@ -279,12 +282,25 @@ function RecordActions({
 
   if (asking) {
     return (
-      <div className="flex items-center justify-end gap-1.5">
+      <div className="flex flex-wrap items-center justify-end gap-1.5">
+        <div className="w-full">
+          <ReasonChips
+            size="xs"
+            value={reason}
+            onPick={(r, c) => {
+              setReason(r);
+              setCat(c);
+            }}
+          />
+        </div>
         <input
           className="field w-36 py-1 text-xs"
           placeholder="결석 사유 (필수)"
           value={reason}
-          onChange={(e) => setReason(e.target.value)}
+          onChange={(e) => {
+            setReason(e.target.value);
+            setCat(null);
+          }}
           autoFocus
         />
         <button
@@ -292,7 +308,7 @@ function RecordActions({
           className={`${small} border-alert bg-alert text-white`}
           disabled={disabled || !reason.trim()}
           onClick={() => {
-            send({ step: "TO_ABSENT", recordId: record.id, reason });
+            send({ step: "TO_ABSENT", recordId: record.id, reason, cat });
             setAsking(false);
             setReason("");
           }}

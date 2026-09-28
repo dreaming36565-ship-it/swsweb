@@ -3,7 +3,7 @@
 // 출결 결과 표 — 지각·결석·연락 안 됨 학생만 보여준다.
 // 알림함(🔔)에서 결과를 펼칠 때 쓴다. 관리자는 여러 반이 섞이므로 반 이름 칸을 함께 보여준다.
 
-import { fmtTime } from "@/lib/time";
+import { fmtTime, monthDay } from "@/lib/time";
 import type { AttendanceEvent, AttendanceRecord, AttStatus } from "@/lib/types";
 
 const ISSUE: AttStatus[] = ["LATE", "ABSENT", "NO_CONTACT"];
@@ -18,6 +18,11 @@ export function statusChipClass(status: AttStatus): string {
 
 /** "지각 · 오후 5:40" / "결석 (미리 연락)" / "지각 · 오후 5:52 도착" */
 export function statusText(r: AttendanceRecord): string {
+  const done = r.status === "ABSENT" && r.makeupDoneDate ? ` · ${monthDay(r.makeupDoneDate)} 보강완료` : "";
+  return baseStatus(r) + done;
+}
+
+function baseStatus(r: AttendanceRecord): string {
   if (r.status === "LATE" && r.arrivedAt !== null) return `지각 · ${fmtTime(r.arrivedAt)} 도착`;
   if (r.status === "LATE" && r.etaUnknown) return "지각 · 도착시간 모름";
   if (r.status === "LATE") return r.etaMin !== null ? `지각 · ${fmtTime(r.etaMin)} 도착 예정` : "지각";

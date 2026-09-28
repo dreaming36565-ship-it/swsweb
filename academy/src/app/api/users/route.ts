@@ -1,44 +1,26 @@
 import { readJson, requirePermission, withUser } from "@/lib/api";
 import { assert } from "@/lib/errors";
-import { createUser, deleteUser, listUsers, updateUser } from "@/lib/repo";
+import { createUser, deleteUser, listUsers, resetPassword, updateUser } from "@/lib/repo";
 
 export const GET = withUser(({ user }) => {
   requirePermission(user, "users.write");
   return { users: listUsers() };
 });
 
+/** 새 계정 — 아이디 = 한글 이름, 처음 비밀번호 1234 */
 export const POST = withUser(async ({ user, req }) => {
   requirePermission(user, "users.write");
-  const body = await readJson<{
-    loginId?: string;
-    password?: string;
-    name?: string;
-    role?: string;
-    department?: string;
-  }>(req);
-  return {
-    id: createUser({
-      loginId: body.loginId ?? "",
-      password: body.password ?? "",
-      name: body.name ?? "",
-      role: body.role ?? "TEACHER",
-      department: body.department ?? "ELEM",
-    }),
-  };
+  const body = await readJson<{ name?: string; roles?: string[]; department?: string }>(req);
+  return { id: createUser({ name: body.name ?? "", roles: body.roles ?? ["TEACHER"], department: body.department ?? "ELEM" }) };
 });
 
+/** 이름 · 권한(여러 개) · 소속 · 사용 여부 · 비밀번호 초기화(resetPassword: true) */
 export const PATCH = withUser(async ({ user, req }) => {
   requirePermission(user, "users.write");
-  const body = await readJson<{
-    id?: number;
-    name?: string;
-    role?: string;
-    department?: string;
-    password?: string;
-    active?: number;
-  }>(req);
+  const body = await readJson<{ id?: number; name?: string; roles?: string[]; department?: string; active?: number; resetPassword?: boolean }>(req);
   assert(body.id, "계정을 찾을 수 없습니다.");
-  updateUser(body.id, body);
+  if (body.resetPassword) resetPassword(body.id);
+  else updateUser(body.id, body);
   return null;
 });
 

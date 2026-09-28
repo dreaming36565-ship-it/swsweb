@@ -1,0 +1,53 @@
+// 권한표 — 서버(API 검사)와 화면(버튼 보이기)이 같이 쓴다. DB 의존 금지.
+
+import type { Role, SessionUser } from "./types";
+
+/**
+ * 기능별 허용 권한 — 새 기능을 추가할 때 여기에 함께 등록할 것.
+ * 한 사람이 권한을 여러 개 가지면, 그중 하나라도 허용되면 할 수 있다.
+ */
+export const PERMISSIONS = {
+  "timetable.read": ["ADMIN", "TEACHER", "DESK"],
+  /** 반 관리(반 만들기·시간) · 강의실 · 명단 엑셀 올리기 · 반 삭제 */
+  "timetable.write": ["ADMIN"],
+  /** ⇄ 알파·수업 순서 바꾸기 */
+  "timetable.swap": ["ADMIN"],
+  /** 교실배정(빈 교실 찾기) · 사용 가능 교실 표시 */
+  "rooms.booking": ["ADMIN", "DESK"],
+  /** 교실 경고 「확인 완료」 */
+  "rooms.alertOk": ["ADMIN"],
+  /** 교재 책장 · 사용교재 입력 */
+  "books.write": ["ADMIN", "TEACHER", "DESK"],
+  /** 반 학생 명단 고치기 */
+  "students.write": ["ADMIN", "TEACHER", "DESK"],
+  "sr.read": ["ADMIN", "TEACHER", "DESK"],
+  /** 자리 바로 바꾸기 · 선생님 요청 승인 */
+  "sr.move": ["ADMIN", "DESK"],
+  /** 자리 요청 보내기 (바로 바꿀 수 없는 선생님) */
+  "sr.request": ["TEACHER"],
+  /** 임시 자리 · 하원 · 미션지 받음/요청 */
+  "sr.desk": ["ADMIN", "DESK"],
+  /** 월초 자리 정리 */
+  "sr.pack": ["ADMIN"],
+  "attendance.teacher": ["ADMIN", "TEACHER"],
+  "attendance.desk": ["ADMIN", "DESK"],
+  "attendance.read": ["ADMIN", "TEACHER", "DESK"],
+  "makeups.read": ["ADMIN", "TEACHER", "DESK"],
+  /** 결석 사유 · 알린 때 · 유료 보강 · 결석 미리 등록 */
+  "absence.fix": ["ADMIN", "DESK"],
+  /** 인정 / 개인사유 판정 · 이월 승인 */
+  "absence.judge": ["ADMIN"],
+  /** 숙제검사 기입 (선생님은 내 반만) */
+  "homework.check": ["ADMIN", "TEACHER", "DESK"],
+  /** 숙제반 관리 (요일 · 인증 · 신청 등록) */
+  "homework.class": ["ADMIN", "DESK"],
+  "users.write": ["ADMIN"],
+  "notices.write": ["ADMIN"],
+  "tasks.write": ["ADMIN"],
+} as const satisfies Record<string, readonly Role[]>;
+
+export type Permission = keyof typeof PERMISSIONS;
+
+export function can(user: Pick<SessionUser, "roles">, perm: Permission): boolean {
+  return user.roles.some((r) => (PERMISSIONS[perm] as readonly Role[]).includes(r));
+}
