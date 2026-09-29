@@ -4,8 +4,8 @@
 import { getDb } from "../db";
 import { AppError, assert } from "../errors";
 import { can } from "../perm";
-import { checkDatesOf, homeworkSlots, homeworkStudents, marksOf, type HwStudent } from "../seed";
-import { isMark, quarterOf, slotClashes, timeline, type HwPlan, type HwSlot, type Mark } from "../homework";
+import { checkDatesOf, forcedPlans, homeworkSlots, homeworkStudents, marksOf, type HwStudent } from "../seed";
+import { certUnchecked, clashOn, isMark, md, parseApplyText, quarterOf, timeline, type HwPlan, type HwSlot, type Mark } from "../homework";
 import { SEATS, seatBlocker } from "../sr";
 import { monthDayWeek, rangeLabel } from "../time";
 import type { SessionUser } from "../types";
@@ -22,8 +22,8 @@ export type HomeworkData = {
   marks: { studentId: number; date: string; mark: Mark }[];
   cert: { studentId: number; date: string; state: "OK" | "MISS" }[];
   plans: { studentId: number; day: number; how: "ATTEND" | "CERT"; slotId: number | null }[];
-  forcedSlot: { studentId: number; slotId: number }[];
-  apply: { studentId: number; slotId: number; month: string }[];
+  /** 신청 — 요일마다 1부 · 2부 중 하나 */
+  apply: { studentId: number; slotId: number; month: string; day: number }[];
   late: { id: number; studentId: number; lates: string[]; date: string | null; slotId: number | null; done: boolean }[];
   seen: { studentId: number; start: string }[];
   slots: HwSlot[];
@@ -70,8 +70,7 @@ export function homeworkData(): HomeworkData {
     ),
     cert: rows(db.prepare("SELECT student_id AS studentId, date, state FROM hw_cert").all()),
     plans: rows(db.prepare("SELECT student_id AS studentId, day, how, slot_class_id AS slotId FROM hw_plan").all()),
-    forcedSlot: rows(db.prepare("SELECT student_id AS studentId, slot_class_id AS slotId FROM hw_forced_slot").all()),
-    apply: rows(db.prepare("SELECT student_id AS studentId, slot_class_id AS slotId, month FROM hw_apply").all()),
+    apply: rows(db.prepare("SELECT student_id AS studentId, slot_class_id AS slotId, month, day FROM hw_apply ORDER BY day").all()),
     late: rows<{ id: number; studentId: number; lates: string; date: string | null; slotId: number | null; done: number }>(
       db.prepare("SELECT id, student_id AS studentId, lates, date, slot_class_id AS slotId, done FROM hw_late ORDER BY id").all(),
     ).map((l) => ({ ...l, lates: l.lates.split(",").filter(Boolean), done: l.done === 1 })),
@@ -120,9 +119,13 @@ export function setMark(user: SessionUser, studentId: number, date: string, mark
   return { started, graduated };
 }
 
+/** 📷 숙제인증 확인 — 담당T(내 반만) · 관리자 · 데스크 */
 export function setCert(user: SessionUser, studentId: number, date: string, state: "OK" | "MISS" | null): void {
-  assert(can(user, "homework.class"), "숙제반 관리 권한이 없어요.");
+  assert(can(user, "homework.cert"), "숙제인증을 확인할 권한이 없어요.");
   assert(date <= today(), "아직 오지 않은 날은 기록할 수 없어요.");
+  if (!user.roles.includes("ADMIN") && !user.roles.includes("DESK")) {
+    assert(studentOf(studentId).regular?.teacherId === user.id, "선생님은 내 반 학생만 확인할 수 있어요.");
+  }
   if (state) getDb().prepare("INSERT OR REPLACE INTO hw_cert (student_id, date, state) VALUES (?, ?, ?)").run(studentId, date, state);
   else getDb().prepare("DELETE FROM hw_cert WHERE student_id = ? AND date = ?").run(studentId, date);
 }
@@ -150,38 +153,28 @@ export function savePlan(user: SessionUser, studentId: number, plan: HwPlan): vo
   refreshSr();
 }
 
-/** 강제 숙제반 요일(칸) 바꾸기 — 요일별 방법은 새 칸 기준으로 다시 */
-export function setForcedSlot(user: SessionUser, studentId: number, slotId: number): void {
-  assert(can(user, "homework.class"), "숙제반 관리 권한이 없어요.");
-  const st = studentOf(studentId);
-  const slot = homeworkSlots(getDb()).find((s) => s.id === slotId);
-  assert(slot, "숙제반을 찾을 수 없습니다.");
-  assert(!slotClashes(slot, (d) => st.busy[d] ?? []), "그 숙제반은 수업·SR과 겹쳐요.");
-  transaction(() => {
-    getDb().prepare("INSERT OR REPLACE INTO hw_forced_slot (student_id, slot_class_id) VALUES (?, ?)").run(studentId, slotId);
-    getDb().prepare("DELETE FROM hw_plan WHERE student_id = ?").run(studentId);
-  });
-  refreshSr();
-}
-
 export function markSeen(studentId: number, start: string): void {
   getDb().prepare("INSERT OR IGNORE INTO hw_seen (student_id, start) VALUES (?, ?)").run(studentId, start);
 }
 
-export function addApply(user: SessionUser, studentId: number, slotId: number, month: string): void {
+/** 한 달 신청 저장 — 요일마다 1부 · 2부 중 하나 (그 달 그 학생의 신청을 통째로 바꾼다) */
+export function saveApply(user: SessionUser, studentId: number, month: string, picks: { day: number; slotId: number }[]): void {
   assert(can(user, "homework.class"), "숙제반 관리 권한이 없어요.");
   assert(/^\d{4}-\d{2}$/.test(month), "달을 골라 주세요.");
   const st = studentOf(studentId);
-  const slot = homeworkSlots(getDb()).find((s) => s.id === slotId);
-  assert(slot, "숙제반을 찾을 수 없습니다.");
-  assert(!slotClashes(slot, (d) => st.busy[d] ?? []), "그 시간은 수업·SR과 겹쳐요.");
-  getDb().prepare("INSERT OR IGNORE INTO hw_apply (student_id, slot_class_id, month) VALUES (?, ?, ?)").run(studentId, slotId, month);
-  refreshSr();
-}
-
-export function removeApply(user: SessionUser, studentId: number, slotId: number, month: string): void {
-  assert(can(user, "homework.class"), "숙제반 관리 권한이 없어요.");
-  getDb().prepare("DELETE FROM hw_apply WHERE student_id = ? AND slot_class_id = ? AND month = ?").run(studentId, slotId, month);
+  const slots = homeworkSlots(getDb());
+  assert(new Set(picks.map((p) => p.day)).size === picks.length, "한 요일에는 1부 · 2부 중 하나만 고를 수 있어요.");
+  for (const p of picks) {
+    const slot = slots.find((s) => s.id === p.slotId);
+    assert(slot && slot.days.includes(p.day), "그 요일에 없는 숙제반이에요.");
+    assert(!clashOn(slot, p.day, (d) => st.busy[d] ?? []), `${"일월화수목금토"[p.day]}요일 ${rangeLabel(slot.start, slot.end)}은 수업·SR과 겹쳐요.`);
+  }
+  const db = getDb();
+  transaction(() => {
+    db.prepare("DELETE FROM hw_apply WHERE student_id = ? AND month = ?").run(studentId, month);
+    const ins = db.prepare("INSERT INTO hw_apply (student_id, slot_class_id, month, day) VALUES (?, ?, ?, ?)");
+    for (const p of picks) ins.run(studentId, p.slotId, month, p.day);
+  });
   refreshSr();
 }
 
@@ -259,9 +252,18 @@ function parseCsv(text: string): string[][] {
   return out.filter((r) => r.some((c) => c.trim()));
 }
 
-export type FormRow = { name: string; className: string; dayText: string; studentId: number | null; slotId: number | null; already: boolean; note: string };
+export type FormRow = {
+  name: string;
+  className: string;
+  dayText: string;
+  studentId: number | null;
+  /** 요일마다 1부 · 2부 */
+  picks: { day: number; slotId: number }[] | null;
+  already: boolean;
+  note: string;
+};
 
-/** 설문 응답(이름 · 반 · 요일)을 읽어 학생·숙제반 칸을 맞춰 본다. 연락처는 읽지도 저장하지도 않는다 */
+/** 설문 응답(이름 · 반 · 요일)을 읽어 학생 · 요일별 숙제반을 맞춰 본다. 연락처는 읽지도 저장하지도 않는다 */
 export async function readFormResponses(month: string): Promise<FormRow[]> {
   const url = getSetting("hw_form_csv_url");
   assert(url, "설정에서 설문 응답 시트 주소(웹에 게시 → CSV)를 먼저 넣어 주세요.");
@@ -286,8 +288,8 @@ export async function readFormResponses(month: string): Promise<FormRow[]> {
   const students = homeworkStudents(db);
   const slots = homeworkSlots(db);
   const applied = new Set(
-    rows<{ student_id: number; slot_class_id: number }>(db.prepare("SELECT student_id, slot_class_id FROM hw_apply WHERE month = ?").all(month)).map(
-      (r) => `${r.student_id}|${r.slot_class_id}`,
+    rows<{ student_id: number; slot_class_id: number; day: number }>(db.prepare("SELECT student_id, slot_class_id, day FROM hw_apply WHERE month = ?").all(month)).map(
+      (r) => `${r.student_id}|${r.slot_class_id}|${r.day}`,
     ),
   );
   const out: FormRow[] = [];
@@ -298,34 +300,64 @@ export async function readFormResponses(month: string): Promise<FormRow[]> {
     const dayText = (r[di] ?? "").trim();
     const cands = students.filter((s) => s.name === name || s.name.startsWith(`${name}(`));
     const st = cands.length === 1 ? cands[0] : cands.find((s) => className && s.regular?.name === className) ?? null;
-    // 「월수 8시」 · 「화,목 오후 4시」 → 요일 글자와 시간이 맞는 칸
-    const hour = /(\d{1,2})\s*시/.exec(dayText)?.[1];
-    const slot =
-      slots.find((s) => s.name === dayText) ??
-      slots.find((s) => s.days.every((d) => dayText.includes("일월화수목금토"[d])) && (!hour || Number(hour) % 12 === Math.floor(s.start / 60) % 12)) ??
-      null;
+    // 「월 8-10시, 목 4-6시」 · 「월수 8시」 · 「화 1부」
+    const picks = parseApplyText(dayText, slots);
+    const clash = st && picks ? picks.find((p) => clashOn(slots.find((s) => s.id === p.slotId)!, p.day, (d) => st.busy[d] ?? [])) : undefined;
     out.push({
       name,
       className,
       dayText,
       studentId: st?.id ?? null,
-      slotId: slot?.id ?? null,
-      already: !!st && !!slot && applied.has(`${st.id}|${slot.id}`),
-      note: !st ? (cands.length > 1 ? "같은 이름이 여러 명 — 반을 확인해 주세요" : "학생을 못 찾았어요") : !slot ? "요일·시간을 못 알아봤어요" : "",
+      picks,
+      already: !!st && !!picks && picks.every((p) => applied.has(`${st.id}|${p.slotId}|${p.day}`)),
+      note: !st
+        ? cands.length > 1
+          ? "같은 이름이 여러 명 — 반을 확인해 주세요"
+          : "학생을 못 찾았어요"
+        : !picks
+          ? "요일·시간을 못 알아봤어요"
+          : clash
+            ? `${"일월화수목금토"[clash.day]}요일 수업·SR과 겹쳐요`
+            : "",
     });
   }
   return out;
 }
 
-export function applyFormRows(user: SessionUser, month: string, list: { studentId: number; slotId: number }[]): number {
+/** 설문 응답 넣기 — 그 달 그 학생의 신청을 응답대로 바꾼다 */
+export function applyFormRows(user: SessionUser, month: string, list: { studentId: number; picks: { day: number; slotId: number }[] }[]): number {
   assert(can(user, "homework.class"), "숙제반 관리 권한이 없어요.");
-  let n = 0;
   transaction(() => {
-    for (const x of list) {
-      const r = getDb().prepare("INSERT OR IGNORE INTO hw_apply (student_id, slot_class_id, month) VALUES (?, ?, ?)").run(x.studentId, x.slotId, month);
-      n += Number(r.changes);
-    }
+    for (const x of list) saveApply(user, x.studentId, month, x.picks);
   });
-  refreshSr();
-  return n;
+  return list.length;
+}
+
+/**
+ * 📷 숙제인증 확인 알림 — 하루 한 번, 인증 요일이 지났는데 확인(인증됨/미인증)이 없으면 담당T에게.
+ * 오픈채팅은 앱이 읽을 수 없어(카카오가 읽기 기능을 열어 주지 않음) 담당T가 확인해서 누른다.
+ */
+export function remindCerts(): void {
+  const t = today();
+  if (getSetting("hw_cert_remind") === t) return;
+  setSetting("hw_cert_remind", t);
+  const db = getDb();
+  const q = quarterOf(t);
+  const marks = marksOf(db);
+  const cert = new Map<number, Map<string, "OK" | "MISS">>();
+  for (const c of rows<{ student_id: number; date: string; state: "OK" | "MISS" }>(db.prepare("SELECT student_id, date, state FROM hw_cert").all())) {
+    cert.set(c.student_id, (cert.get(c.student_id) ?? new Map()).set(c.date, c.state));
+  }
+  const plans = forcedPlans(db, t);
+  const byTeacher = new Map<number, string[]>();
+  for (const st of homeworkStudents(db)) {
+    const p = plans.get(st.id);
+    const teacher = st.regular?.teacherId;
+    if (!p || !teacher) continue;
+    const tl = timeline(marks.get(st.id) ?? new Map(), checkDatesOf(st, q.start, t), q.start, t);
+    if (!tl.cur) continue;
+    const miss = certUnchecked(p.plan, tl.cur, cert.get(st.id) ?? new Map(), t);
+    if (miss.length) byTeacher.set(teacher, [...(byTeacher.get(teacher) ?? []), `${st.name} ${miss.map(md).join(", ")}`]);
+  }
+  for (const [id, list] of byTeacher) notify(id, "HOMEWORK_CERT", "📷 숙제인증 확인해주세요", list.join(" · "), "/homework?view=class");
 }

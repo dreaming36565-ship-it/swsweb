@@ -374,6 +374,53 @@ function MissionLine({ user, snap, c, act }: { user: SessionUser; snap: SrSnapsh
   );
 }
 
+/**
+ * 📄 미션지 확인 (데스크) — 지금 SR · 30분 안에 들어올 반 중 아직 확인 안 한 반.
+ * 약속 장소에 있는 반만 체크하고 「확인 완료」 → 체크한 반 = 받음, 나머지 = 담당T에게 요청 (한 번에)
+ */
+function MissionCheck({ list, act }: { list: SrClass[]; act: (b: Record<string, unknown>, ok?: string) => Promise<boolean> }) {
+  const [have, setHave] = useState<number[]>([]);
+  const toggle = (id: number) => setHave((h) => (h.includes(id) ? h.filter((x) => x !== id) : [...h, id]));
+  const ids = list.map((c) => c.id);
+  const got = have.filter((id) => ids.includes(id));
+  const missing = list.filter((c) => !got.includes(c.id));
+  const noTeacher = missing.filter((c) => !c.teacherId);
+  const submit = async () => {
+    const ok = await act(
+      { action: "MISSION_CHECK", have: got, missing: missing.filter((c) => c.teacherId).map((c) => c.id) },
+      missing.length ? `✅ ${got.length}개 반 받음 · 📣 ${missing.length - noTeacher.length}개 반 요청` : `✅ ${got.length}개 반 받음`,
+    );
+    if (ok) setHave([]);
+  };
+  return (
+    <div className="rounded-xl border border-alert bg-alert-soft px-4 py-2.5 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <b className="text-alert">📄 미션지 확인</b>
+        <span className="text-xs text-muted">있는 반만 체크</span>
+        {list.map((c) => {
+          const on = got.includes(c.id);
+          return (
+            <button
+              key={c.id}
+              type="button"
+              className={`btn px-2.5 py-1 text-xs ${on ? "border-present bg-present-soft text-present" : ""}`}
+              onClick={() => toggle(c.id)}
+            >
+              {on ? "✅" : "☐"} {c.name} <span className="text-muted">{teacherLabel(c.teacherName)}</span>
+            </button>
+          );
+        })}
+        <button type="button" className="btn btn-primary ml-auto px-3 py-1 text-xs" onClick={() => void submit()}>
+          확인 완료{missing.length ? ` · 없는 반 ${missing.length - noTeacher.length}개 📣 요청` : ""}
+        </button>
+      </div>
+      {noTeacher.length ? (
+        <p className="mt-1 text-xs font-semibold text-alert">담당T가 없어 요청 못 함: {noTeacher.map((c) => c.name).join(", ")}</p>
+      ) : null}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------ ① 실시간 */
 
 function LiveView({
@@ -412,16 +459,26 @@ function LiveView({
           {upcoming ? <span className="text-muted">{b.start - now}분 뒤 시작</span> : <span className={`font-extrabold ${left <= 20 ? "text-late" : ""}`}>{left}분 남음</span>}
         </div>
         <div className="text-xs text-muted">
-          {rangeLabel(b.start, b.end)} · {c.members.length}명 · {columnsOf(snap, c.id) || "—"}열{review ? " · 다 끝내면 하원" : ""}
+          {rangeLabel(b.start, b.end)} · {c.members.length}명
+          {(() => {
+            const n = snap.absent.filter((a) => a.classId === c.id).length;
+            return n ? <b className="text-alert"> (결석 {n})</b> : null;
+          })()}{" "}
+          · {columnsOf(snap, c.id) || "—"}열{review ? " · 다 끝내면 하원" : ""}
         </div>
         <div className="mt-1 text-xs">
           {c.members.map((m, i) => {
             const gone = snap.leave.find((l) => l.classId === c.id && l.studentId === m.id);
+            const absent = snap.absent.find((a) => a.classId === c.id && a.studentId === m.id);
             const seat = snap.dayUses.find((u) => u.key === `${c.id}|${m.id}`)?.seat ?? snap.seats.find((s) => s.classId === c.id && s.studentId === m.id)?.seat;
             return (
               <span key={m.id}>
                 {i ? " · " : ""}
-                {gone && gone.atMin <= now ? (
+                {absent ? (
+                  <span className="text-muted" title={absent.reason ? `결석 · ${absent.reason}` : "결석"}>
+                    {m.name} <b className="text-alert">결석</b>
+                  </span>
+                ) : gone && gone.atMin <= now ? (
                   <span className="text-muted">
                     {m.name} 🏠{clockLabel(gone.atMin)} 하원
                   </span>
@@ -440,22 +497,13 @@ function LiveView({
   return (
     <>
       {missing.length ? (
-        <div className="flex items-center justify-between rounded-xl border border-alert bg-alert-soft px-4 py-2.5 text-sm font-bold text-alert">
-          <span>
+        can(user, "sr.desk") ? (
+          <MissionCheck list={missing} act={act} />
+        ) : (
+          <div className="rounded-xl border border-alert bg-alert-soft px-4 py-2.5 text-sm font-bold text-alert">
             📄 미션지 없음: <b>{missing.map((c) => c.name).join(", ")}</b>
-          </span>
-          {can(user, "sr.desk") ? (
-            <button
-              type="button"
-              className="btn px-2.5 py-1 text-xs"
-              onClick={async () => {
-                for (const c of missing) if (c.teacherId) await act({ action: "MISSION", classId: c.id, kind: "REQUEST" });
-              }}
-            >
-              📣 모두 요청
-            </button>
-          ) : null}
-        </div>
+          </div>
+        )
       ) : null}
       <div className="flex items-start gap-4">
         <div className="card flex-1 p-4">
@@ -467,7 +515,7 @@ function LiveView({
           </div>
           <SeatMap occ={occ} colors={colors} now={now} onSeat={(o) => (o.adhocId ? onAdhoc(o) : onStudent(o))} />
           <p className="mt-2 text-xs text-muted">
-            학생을 누르면 자리 정보 · {can(user, "sr.move") ? "자리 바꾸기" : "🙋 자리 요청"} · 10분 안에 끝나는 자리는 「곧 끝」 · 빗금 = 임시 자리
+            학생을 누르면 자리 정보 · {can(user, "sr.move") ? "자리 바꾸기" : "🙋 자리 요청"} · 10분 안에 끝나는 자리는 「곧 끝」 · 빗금 = 임시 자리 · 결석 = 빈자리
           </p>
         </div>
         <div className="w-[340px] shrink-0 space-y-3">

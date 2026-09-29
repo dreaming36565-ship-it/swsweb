@@ -9,7 +9,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { seedDemo, importLocalRecords, rebuildSrSeats } from "./seed";
+import { seedDemo, importLocalRecords, rebuildSrSeats, upgradeHomeworkSlots } from "./seed";
 
 const DB_PATH = path.join(process.cwd(), "data", "academy.db");
 
@@ -45,7 +45,9 @@ CREATE TABLE IF NOT EXISTS classes (
   room_id INTEGER REFERENCES rooms(id) ON DELETE SET NULL,
   grade TEXT,
   textbook TEXT,
-  level TEXT
+  level TEXT,
+  -- 🔗 합반: 같은 교실 · 같은 선생님과 같이 수업하는 반 (시작·끝 시간은 다를 수 있다). 양쪽에 서로 적는다
+  hapban_with INTEGER REFERENCES classes(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS students (
@@ -335,12 +337,13 @@ CREATE TABLE IF NOT EXISTS hw_forced_slot (
   slot_class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE
 );
 
--- 🙋 신청 숙제반 — 한 달 단위 (month = YYYY-MM)
+-- 🙋 신청 숙제반 — 한 달 단위 (month = YYYY-MM), 요일마다 1부 · 2부 중 하나 (day = 요일)
 CREATE TABLE IF NOT EXISTS hw_apply (
   student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
   slot_class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
   month TEXT NOT NULL,
-  PRIMARY KEY (student_id, slot_class_id, month)
+  day INTEGER NOT NULL,
+  PRIMARY KEY (student_id, slot_class_id, month, day)
 );
 
 -- ⏰ 지각 3회 → 숙제반 1회 — lates: 지각한 날짜들(쉼표), date·slot: 다녀올 날과 숙제반 칸
@@ -443,6 +446,18 @@ const MIGRATIONS: ((db: DatabaseSync) => void)[] = [
               WHERE r.status = 'ABSENT'`);
     importLocalRecords(db);
     rebuildSrSeats(db);
+  },
+  // 2: 개별반 칸 이름 「개별」 → 「수업」 (2026-09-29)
+  (db) => {
+    db.exec("UPDATE timetable_sessions SET label = '수업' WHERE type = 'INDIVIDUAL' AND label = '개별'");
+  },
+  // 3: 🔗 합반 (2026-09-30)
+  (db) => {
+    ensureColumn(db, "classes", "hapban_with", "INTEGER REFERENCES classes(id) ON DELETE SET NULL");
+  },
+  // 4: 숙제반 = 월~목 1부(초등숙제반 시간) · 2부(중등숙제반 시간), 신청은 요일 단위 (2026-09-30)
+  (db) => {
+    upgradeHomeworkSlots(db);
   },
 ];
 

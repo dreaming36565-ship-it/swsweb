@@ -7,7 +7,7 @@ import Modal from "../Modal";
 import { apiPatch, errorMessage } from "@/lib/http";
 import { can } from "@/lib/perm";
 import { teacherLabel, type ClassPart } from "@/lib/types";
-import { course, dayLabel, mainTeacher, timeSpan } from "./model";
+import { course, dayLabel, ownerLabel, timeSpan } from "./model";
 import { DayTable, PartBooksModal } from "./views";
 import type { Ctx } from "./TimetableClient";
 
@@ -55,12 +55,20 @@ export default function ClassDetail({ ctx, classId, onClose }: { ctx: Ctx; class
       <div className="mb-3 flex gap-6 text-sm">
         <div>
           <span className="label">담당</span>
-          {teacherLabel(mainTeacher(c).name)}
+          {ownerLabel(c)}
         </div>
         <div>
           <span className="label">전체 수업시간</span>
           {dayLabel(c.days)} {timeSpan(c)}
         </div>
+        {c.hapbanWith ? (
+          <div>
+            <span className="label">🔗 합반</span>
+            <button type="button" className="font-bold text-navy-800 hover:underline" onClick={() => ctx.openClass(c.hapbanWith!)}>
+              {ctx.data.classes.find((x) => x.id === c.hapbanWith)?.name ?? "—"}
+            </button>
+          </div>
+        ) : null}
       </div>
       <b className="text-sm">과정별 세부 시간표</b>
       <DayTable ctx={ctx} c={c} onEditBooks={(p) => setBookFor(p)} />

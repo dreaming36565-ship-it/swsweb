@@ -18,6 +18,7 @@ import type {
   TimetableSession,
 } from "../types";
 import { deptWhere, isRole, notify, nowIso, nowMin, row, rows, transaction, userIdsWithRole, type DeptFilter } from "./base";
+import { srRoster } from "../seed";
 import { listSessions, sessionOn } from "./timetable";
 import { ensureAbsenceFromRecord, makeupDoneByRecord, preRegisteredOn, removeAbsenceForRecord } from "./absence";
 
@@ -64,6 +65,21 @@ function attachRecords(heads: EventHead[]): AttendanceEvent[] {
 
 type Opened = { checker: Checker; triggerMin: number; teacherId: number | null; className: string };
 
+/** 숙제반 그날 참석할 학생 — 그 달 신청 · 강제(🏫 참석 요일) · 지각 3회(그 날짜) */
+function homeworkAttendees(classId: number, date: string, day: number): { id: number }[] {
+  const db = getDb();
+  const roster = srRoster(db, date);
+  const ids = new Set<number>();
+  for (const id of roster.classes.find((c) => c.id === classId)?.members ?? []) {
+    const days = roster.memberDays.get(`${classId}|${id}`);
+    if (!days || days.includes(day)) ids.add(id);
+  }
+  for (const l of rows<{ student_id: number }>(db.prepare("SELECT student_id FROM hw_late WHERE date = ? AND slot_class_id = ?").all(date, classId))) {
+    ids.add(l.student_id);
+  }
+  return [...ids].sort((a, b) => a - b).map((id) => ({ id }));
+}
+
 function openEvent(sessionId: number, date: string): Opened | null {
   const db = getDb();
   if (row(db.prepare("SELECT id FROM attendance_events WHERE session_id = ? AND date = ?").get(sessionId, date))) return null;
@@ -79,7 +95,7 @@ function openEvent(sessionId: number, date: string): Opened | null {
       )
       .run(sessionId, date, checker, triggerMin, now, now).lastInsertRowid,
   );
-  const students = rows<{ id: number }>(
+  const students = s.type === "HOMEWORK" ? homeworkAttendees(s.classId, date, s.dayOfWeek) : rows<{ id: number }>(
     db
       .prepare(
         `SELECT s.id FROM student_classes sc JOIN students s ON s.id = sc.student_id
@@ -95,6 +111,11 @@ function openEvent(sessionId: number, date: string): Opened | null {
   for (const st of students) {
     const p = pre.get(st.id);
     ins.run(eventId, st.id, p ? 1 : 0, p?.reason ?? null, p?.cat ?? null);
+  }
+  // 올 학생이 없으면(예: 숙제반에 그날 아무도 없음) 팝업 없이 끝
+  if (students.length === 0) {
+    setStage(eventId, "DONE");
+    return null;
   }
   return { checker, triggerMin, teacherId: s.teacherId, className: s.className };
 }
@@ -156,7 +177,7 @@ export function triggerAttendance(sessionIds: number[], date: string): void {
     const o = openEvent(id, date);
     if (o) opened.push(o);
   }
-  assert(opened.length > 0, "이미 열려 있는 출결입니다.");
+  assert(opened.length > 0, "이미 열려 있거나, 올 학생이 없는 수업입니다.");
   notifyOpened(opened);
 }
 

@@ -107,6 +107,8 @@ export type ClassRow = {
   /** 직접 입력한 학년의 학교급 (초등·중등·고등) */
   level: string | null;
   studentCount: number;
+  /** 🔗 합반 — 같은 교실 · 같은 선생님과 같이 수업하는 반 */
+  hapbanWith: number | null;
 };
 
 /** 학생은 여러 반에 동시에 속할 수 있다 (정규반 + 개별반) */
@@ -176,6 +178,8 @@ export type ClassModel = {
   parts: ClassPart[];
   /** 수업 없이 SR만 쓰는 반 (누적오답 · 숙제반) */
   srOnly: boolean;
+  /** 🔗 합반 — 같은 교실 · 같은 선생님과 같이 수업하는 반 (겹침 경고 없음, 출결·SR은 각자 시간) */
+  hapbanWith: number | null;
 };
 
 export type Book = { id: number; level: string; grade: string; name: string; createdAt: string };

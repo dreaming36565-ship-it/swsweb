@@ -15,6 +15,8 @@ export type GridBlock = {
   color?: ClassColor | null;
   /** sr = 점선, booking = 빗금 */
   kind: "class" | "sr" | "booking";
+  /** 🔗 합반 — 굵은 테두리 */
+  hapban?: boolean;
   title?: string;
   onClick?: () => void;
   content: ReactNode;
@@ -77,6 +79,7 @@ export default function TimeGrid({ from, to, columns, nowMin }: { from: number; 
                     width: `calc(${w}% - 6px)`,
                   };
                   if (it.color && it.kind !== "booking") Object.assign(style, { background: it.color.bg, borderColor: it.color.border, color: it.color.text });
+                  if (it.hapban) Object.assign(style, { borderWidth: 2, boxShadow: "0 0 0 1.5px var(--color-navy-700)" });
                   const kindCls =
                     it.kind === "sr"
                       ? "border-dashed"
@@ -119,5 +122,6 @@ export function dayRange(day: number, points: number[]): [number, number] {
     a = Math.min(a, Math.floor(Math.min(...points) / 60) * 60);
     z = Math.max(z, Math.ceil(Math.max(...points) / 60) * 60);
   }
-  return [a, z];
+  // 위아래 30분 여유 — 첫 줄(2:00) · 끝 줄(10:00) 글자가 잘리지 않게
+  return [a - 30, z + 30];
 }

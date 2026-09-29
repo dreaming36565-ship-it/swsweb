@@ -2,6 +2,7 @@
 
 // 어느 메뉴에 있든 출결·미션지 팝업이 뜨도록 셸에 상주한다. 4초 폴링.
 // 팝업은 ① 출석체크, ② 출결전화, 📄 미션지 요청(선생님) — 모두 "나중에" 가 없다. 끝까지 처리해야 사라진다.
+// 출결 팝업 두 개는 「접기」로 잠깐 내려 둘 수 있다 — 위쪽 띠가 처리할 때까지 깜박인다.
 // 출결 결과(지각·결석)는 팝업 없이 담당 선생님·관리자 알림함으로만 간다.
 
 import { useCallback, useEffect, useState } from "react";
@@ -17,6 +18,8 @@ export default function AttendanceHost({ user }: { user: SessionUser }) {
   const [groups, setGroups] = useState<AttendanceGroup[]>([]);
   const [missions, setMissions] = useState<MissionRequest[]>([]);
   const [muted, setMuted] = useState<Record<string, boolean>>({});
+  /** 접어 둔 출결 팝업 — 위쪽 띠만 깜박인다 (처리해야 사라짐) */
+  const [folded, setFolded] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     try {
@@ -62,6 +65,8 @@ export default function AttendanceHost({ user }: { user: SessionUser }) {
     group: current,
     muted: muted[current.key] ?? false,
     onToggleMute: () => setMuted((m) => ({ ...m, [current.key]: !m[current.key] })),
+    folded: folded[current.key] ?? false,
+    onToggleFold: () => setFolded((m) => ({ ...m, [current.key]: !m[current.key] })),
     onDone: done,
   };
 

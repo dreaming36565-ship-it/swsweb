@@ -9,7 +9,7 @@ import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { dateKey, toMin } from "./time";
 import { gradeLevel, planSeats, type Level, type SrBlock } from "./sr";
-import { defaultForcedSlot, defaultPlan, isMark, quarterOf, timeline, type HwPlan, type HwSlot, type Mark } from "./homework";
+import { defaultPlan, isMark, quarterOf, timeline, type HwPlan, type HwSlot, type Mark } from "./homework";
 
 /** 한 요일 묶음의 수업 시간. sr 이 있으면 그 시간에 SR룸을 쓴다. */
 type Slot = { days: number[]; start: string; end: string; sr?: [string, string] };
@@ -130,17 +130,29 @@ function srOnly(
 }
 
 /** 고등 누적오답 — 요일마다 반 하나, SR 자기주도 오후 6:00 ~ 10:00 (다 마치면 하원) */
-const REVIEW: ClassDef[] = ["월", "화", "수", "목", "금"].map((d, i) =>
-  srOnly(`누적오답_${d}`, "HIGH", "field", "누적오답", "자기주도", "REVIEW", [i + 1], "18:00", "22:00"),
-);
-
-/** 숙제반 — 신청하거나 숙제 미흡으로 참여. 담당 선생님은 아직 정하지 않았다. */
-const HOMEWORK: ClassDef[] = [
-  srOnly("숙제반 월수 8시", "ELEM", "", "숙제반", "숙제", "HOMEWORK", MW, "20:00", "22:00"),
-  srOnly("숙제반 화목 8시", "ELEM", "", "숙제반", "숙제", "HOMEWORK", TT, "20:00", "22:00"),
-  srOnly("숙제반 화목 4시", "ELEM", "", "숙제반", "숙제", "HOMEWORK", TT, "16:00", "18:00"),
-  srOnly("숙제반 월목 4시", "ELEM", "", "숙제반", "숙제", "HOMEWORK", [1, 4], "16:00", "18:00"),
+const REVIEW: ClassDef[] = [
+  ...["월", "화", "수", "목", "금"].map((d, i) => srOnly(`누적오답_${d}`, "HIGH", "field", "누적오답", "자기주도", "REVIEW", [i + 1], "18:00", "22:00")),
+  // 토요일은 기하 수업·SR 뒤 오후 1:00 ~ 2:00 (2026-09-30 확정)
+  srOnly("누적오답_토", "HIGH", "field", "누적오답", "자기주도", "REVIEW", [6], "13:00", "14:00"),
 ];
+
+/**
+ * 숙제반 — 신청하거나 숙제 미흡으로 참여. 담당 선생님 없음(출결 = 데스크).
+ * 월~목 1부 초등숙제반 시간(4~6시) · 2부 중등숙제반 시간(8~10시). 학생은 요일마다 1부 · 2부 중 하나를 고른다.
+ */
+const HW_ELEM = "초등숙제반 시간";
+const HW_MID = "중등숙제반 시간";
+const HOMEWORK: ClassDef[] = [
+  srOnly(HW_ELEM, "ELEM", "", "숙제반", "숙제", "HOMEWORK", [1, 2, 3, 4], "16:00", "18:00"),
+  srOnly(HW_MID, "ELEM", "", "숙제반", "숙제", "HOMEWORK", [1, 2, 3, 4], "20:00", "22:00"),
+];
+/** 예전 숙제반 칸(요일 묶음) → 지금 칸 + 요일 — 시트 기록 · 명단을 옮길 때 */
+const LEGACY_HW: Record<string, { name: string; days: number[] }> = {
+  "숙제반 월수 8시": { name: HW_MID, days: MW },
+  "숙제반 화목 8시": { name: HW_MID, days: TT },
+  "숙제반 화목 4시": { name: HW_ELEM, days: TT },
+  "숙제반 월목 4시": { name: HW_ELEM, days: [1, 4] },
+};
 
 const CLASSES: ClassDef[] = [...REGULAR, ...INDIVIDUAL, ...REVIEW, ...HOMEWORK];
 
@@ -246,19 +258,21 @@ export function homeworkSlots(db: DatabaseSync): HwSlot[] {
 export type HwStudent = {
   id: number;
   name: string;
-  regular: { id: number; name: string; days: number[]; teacherId: number | null } | null;
+  regular: { id: number; name: string; days: number[]; teacherId: number | null; level: "초등" | "중등" | null } | null;
   individualDays: number[];
   busy: Record<number, [number, number][]>;
 };
 
 export function homeworkStudents(db: DatabaseSync): HwStudent[] {
   const sessions = sessionRows(db);
-  const classes = q(db, "SELECT id, name, department, teacher_id FROM classes").all() as {
+  const classes = q(db, "SELECT id, name, department, teacher_id, grade FROM classes").all() as {
     id: number;
     name: string;
     department: string;
     teacher_id: number | null;
+    grade: string | null;
   }[];
+  const levelOf = (grade: string | null) => (grade?.startsWith("초") ? "초등" : grade?.startsWith("중") ? "중등" : null);
   const cls = new Map(classes.map((c) => [c.id, c]));
   const daysOf = (id: number) => [...new Set(sessions.filter((s) => s.class_id === id).map((s) => s.day_of_week))].sort();
   const typeOf = (id: number) => sessions.find((s) => s.class_id === id)?.type;
@@ -293,7 +307,13 @@ export function homeworkStudents(db: DatabaseSync): HwStudent[] {
       id,
       name: s.name,
       regular: regularId
-        ? { id: regularId, name: cls.get(regularId)!.name, days: daysOf(regularId), teacherId: cls.get(regularId)!.teacher_id }
+        ? {
+            id: regularId,
+            name: cls.get(regularId)!.name,
+            days: daysOf(regularId),
+            teacherId: cls.get(regularId)!.teacher_id,
+            level: levelOf(cls.get(regularId)!.grade),
+          }
         : null,
       individualDays: individual ? daysOf(individual) : [],
       busy,
@@ -323,22 +343,19 @@ export function marksOf(db: DatabaseSync): Map<number, Map<string, Mark>> {
 }
 
 /** 강제 숙제반 학생의 칸 · 요일별 방법 (지금 진행 중인 회차가 있는 학생만) */
-export function forcedPlans(db: DatabaseSync, today: string): Map<number, { slot: HwSlot | null; plan: HwPlan }> {
+export function forcedPlans(db: DatabaseSync, today: string): Map<number, { plan: HwPlan }> {
   const slots = homeworkSlots(db);
   const marks = marksOf(db);
   const { start } = quarterOf(today);
   const month = today.slice(0, 7);
-  const forcedSlot = new Map(
-    (q(db, "SELECT student_id, slot_class_id FROM hw_forced_slot").all() as { student_id: number; slot_class_id: number }[]).map((r) => [
-      r.student_id,
-      r.slot_class_id,
-    ]),
-  );
-  const applying = new Map(
-    (q(db, "SELECT student_id, slot_class_id FROM hw_apply WHERE month = ?").all(month) as { student_id: number; slot_class_id: number }[]).map(
-      (r) => [r.student_id, r.slot_class_id],
-    ),
-  );
+  const applying = new Map<number, { day: number; slotId: number }[]>();
+  for (const r of q(db, "SELECT student_id, slot_class_id, day FROM hw_apply WHERE month = ?").all(month) as {
+    student_id: number;
+    slot_class_id: number;
+    day: number;
+  }[]) {
+    applying.set(r.student_id, [...(applying.get(r.student_id) ?? []), { day: r.day, slotId: r.slot_class_id }]);
+  }
   const plans = new Map<number, HwPlan>();
   for (const r of q(db, "SELECT student_id, day, how, slot_class_id FROM hw_plan").all() as {
     student_id: number;
@@ -350,16 +367,15 @@ export function forcedPlans(db: DatabaseSync, today: string): Map<number, { slot
     p[r.day] = r.how === "CERT" ? { how: "CERT" } : { how: "ATTEND", slotId: r.slot_class_id ?? 0 };
     plans.set(r.student_id, p);
   }
-  const out = new Map<number, { slot: HwSlot | null; plan: HwPlan }>();
+  const out = new Map<number, { plan: HwPlan }>();
   for (const st of homeworkStudents(db)) {
     if (!st.regular) continue;
     const t = timeline(marks.get(st.id) ?? new Map(), checkDatesOf(st, start, today), start, today);
     if (!t.cur) continue;
-    const fixed = forcedSlot.get(st.id);
-    const slot =
-      (fixed ? slots.find((s) => s.id === fixed) : null) ??
-      defaultForcedSlot(slots, { applyingSlotId: applying.get(st.id) ?? null, regularDays: st.regular.days, busy: (d) => st.busy[d] ?? [] });
-    out.set(st.id, { slot, plan: plans.get(st.id) ?? defaultPlan(slot) });
+    const plan =
+      plans.get(st.id) ??
+      defaultPlan(slots, { applying: applying.get(st.id) ?? [], regularDays: st.regular.days, busy: (d) => st.busy[d] ?? [], level: st.regular.level });
+    out.set(st.id, { plan });
   }
   return out;
 }
@@ -375,7 +391,18 @@ export function srRoster(
   classes: { id: number; name: string; level: Level; members: number[] }[];
   blocks: (SrBlock & { sessionId: number })[];
   memberDays: Map<string, number[]>;
+  /** 🔗 합반 짝 (반id → 짝 반id) */
+  partners: Map<number, number>;
 } {
+  // 합반 칸은 마이그레이션 3단계에서 생긴다 — 그 전 단계(1단계의 자리 계산)에서는 없다
+  const hasHapban = (q(db, "PRAGMA table_info(classes)").all() as { name: string }[]).some((c) => c.name === "hapban_with");
+  const partners = new Map(
+    hasHapban
+      ? (q(db, "SELECT id, hapban_with FROM classes WHERE hapban_with IS NOT NULL").all() as { id: number; hapban_with: number }[]).map(
+          (r) => [r.id, r.hapban_with] as const,
+        )
+      : [],
+  );
   const sessions = sessionRows(db).filter((s) => s.alpha_is_sr === 1 && s.alpha_start_min !== null && s.alpha_end_min !== null);
   const blocks = sessions.map((s) => ({ classId: s.class_id, day: s.day_of_week, start: s.alpha_start_min!, end: s.alpha_end_min!, sessionId: s.id }));
   const classRows = q(db, "SELECT id, name, grade, level FROM classes").all() as { id: number; name: string; grade: string | null; level: string | null }[];
@@ -391,25 +418,25 @@ export function srRoster(
   const memberDays = new Map<string, number[]>();
   const hwIds = new Set(classRows.filter((c) => c.grade === "숙제반").map((c) => c.id));
   for (const id of hwIds) members.set(id, []);
-  for (const a of q(db, "SELECT student_id, slot_class_id FROM hw_apply WHERE month = ? ORDER BY student_id").all(today.slice(0, 7)) as {
+  // 신청 · 강제 모두 요일 단위 — 그 학생이 오는 요일만 (memberDays)
+  const attend = (slotId: number, studentId: number, day: number) => {
+    if (!hwIds.has(slotId)) return;
+    const list = members.get(slotId)!;
+    if (!list.includes(studentId)) list.push(studentId);
+    const key = `${slotId}|${studentId}`;
+    const days = memberDays.get(key) ?? [];
+    if (!days.includes(day)) days.push(day);
+    memberDays.set(key, days);
+  };
+  for (const a of q(db, "SELECT student_id, slot_class_id, day FROM hw_apply WHERE month = ? ORDER BY student_id").all(today.slice(0, 7)) as {
     student_id: number;
     slot_class_id: number;
+    day: number;
   }[]) {
-    if (!hwIds.has(a.slot_class_id)) continue;
-    const list = members.get(a.slot_class_id)!;
-    if (!list.includes(a.student_id)) list.push(a.student_id);
+    attend(a.slot_class_id, a.student_id, a.day);
   }
   for (const [studentId, { plan }] of forcedPlans(db, today)) {
-    for (const [day, p] of Object.entries(plan)) {
-      if (!p || p.how !== "ATTEND" || !hwIds.has(p.slotId)) continue;
-      const list = members.get(p.slotId)!;
-      const key = `${p.slotId}|${studentId}`;
-      if (!list.includes(studentId)) {
-        list.push(studentId);
-        memberDays.set(key, []);
-      }
-      if (memberDays.has(key)) memberDays.get(key)!.push(Number(day));
-    }
+    for (const [day, p] of Object.entries(plan)) if (p?.how === "ATTEND") attend(p.slotId, studentId, Number(day));
   }
 
   // 학교급 — 학년으로, 개별반·숙제반은 다니는 학생들의 다른 반 학교급 중 많은 쪽
@@ -436,6 +463,7 @@ export function srRoster(
       .map((c) => ({ id: c.id, name: c.name, level: levelOf(c.id), members: members.get(c.id) ?? [] })),
     blocks,
     memberDays,
+    partners,
   };
 }
 
@@ -444,7 +472,7 @@ export function srRoster(
  * (시간이 겹치게 됐거나 반에서 빠진 학생의 자리는 버린다). pack = 월초 정리.
  */
 export function rebuildSrSeats(db: DatabaseSync, opts: { pack?: boolean } = {}): { overflow: number } {
-  const { classes, blocks } = srRoster(db);
+  const { classes, blocks, partners } = srRoster(db);
   const existing = (
     q(db, "SELECT class_id, student_id, seat, manual FROM sr_seats").all() as {
       class_id: number;
@@ -453,7 +481,7 @@ export function rebuildSrSeats(db: DatabaseSync, opts: { pack?: boolean } = {}):
       manual: number;
     }[]
   ).map((e) => ({ classId: e.class_id, studentId: e.student_id, seat: e.seat, manual: e.manual === 1 }));
-  const plan = planSeats({ classes, blocks, existing, pack: opts.pack });
+  const plan = planSeats({ classes, blocks, existing, pack: opts.pack, partners });
   db.exec("DELETE FROM sr_seats");
   const ins = db.prepare("INSERT INTO sr_seats (class_id, student_id, seat, manual) VALUES (?, ?, ?, ?)");
   for (const s of plan.seats.values()) ins.run(s.classId, s.studentId, s.seat, s.manual ? 1 : 0);
@@ -545,21 +573,106 @@ export function importLocalRecords(db: DatabaseSync): void {
     const slot = l.start && dow !== null ? slots.find((s) => s.days.includes(dow) && s.start === toMin(l.start!)) : null;
     insLate.run(id, l.lates.join(","), l.date, slot?.id ?? null, l.done ? 1 : 0, now);
   }
-  const insApply = db.prepare("INSERT OR IGNORE INTO hw_apply (student_id, slot_class_id, month) VALUES (?, ?, ?)");
+  // 신청은 요일 단위 — 예전 칸 이름(「숙제반 월수 8시」)이면 그 요일들로 나눠 넣는다
+  const insApply = db.prepare("INSERT OR IGNORE INTO hw_apply (student_id, slot_class_id, month, day) VALUES (?, ?, ?, ?)");
+  const applyTo = (studentId: number, slotName: string, month: string) => {
+    const legacy = LEGACY_HW[slotName];
+    const slot = slots.find((s) => s.name === (legacy?.name ?? slotName));
+    if (slot) for (const d of legacy?.days ?? slot.days) insApply.run(studentId, slot.id, month, d);
+  };
   for (const a of hw?.apply ?? []) {
     const id = studentId(a.name);
-    const slot = slots.find((s) => s.name === a.slot);
-    if (id && slot) insApply.run(id, slot.id, a.month);
+    if (id) applyTo(id, a.slot, a.month);
   }
   // 9월 숙제반 명단 — 강제로만 온 학생은 빼고 신청으로
   const roster = loadLocal<{ classes?: Record<string, string[]>; homeworkKind?: Record<string, string> }>("roster.local.json");
-  for (const slot of slots) {
-    for (const n of roster?.classes?.[slot.name] ?? []) {
+  for (const slotName of Object.keys(LEGACY_HW)) {
+    for (const n of roster?.classes?.[slotName] ?? []) {
       if (roster?.homeworkKind?.[n] === "강제") continue;
       const id = studentId(n);
-      if (id) insApply.run(id, slot.id, "2026-09");
+      if (id) applyTo(id, slotName, "2026-09");
     }
   }
+}
+
+/**
+ * 마이그레이션 4 (2026-09-30) — 숙제반을 「월~목 1부 · 2부」 두 칸으로 합치고, 신청을 요일 단위로 바꾼다.
+ * 예전 칸(「숙제반 월수 8시」 등)은 시작 시각이 같은 칸끼리 하나로: 4시 → 초등숙제반 시간, 8시 → 중등숙제반 시간.
+ * 수업 줄 · 출결 기록 · 신청 · 강제 방법 · 지각 숙제반은 새 칸으로 옮긴다 (지우지 않는다).
+ */
+export function upgradeHomeworkSlots(db: DatabaseSync): void {
+  // 신청 표에 요일 칸 — 기본키가 바뀌므로 새로 만들어 옮긴다 (예전 칸의 요일마다 한 줄)
+  const hasDay = (q(db, "PRAGMA table_info(hw_apply)").all() as { name: string }[]).some((c) => c.name === "day");
+  const oldApply = hasDay ? [] : (q(db, "SELECT student_id, slot_class_id, month FROM hw_apply").all() as { student_id: number; slot_class_id: number; month: string }[]);
+  if (!hasDay) {
+    db.exec("DROP TABLE hw_apply");
+    db.exec(`CREATE TABLE hw_apply (
+      student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+      slot_class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+      month TEXT NOT NULL,
+      day INTEGER NOT NULL,
+      PRIMARY KEY (student_id, slot_class_id, month, day))`);
+  }
+  const hw = q(db, "SELECT id, name FROM classes WHERE grade = '숙제반' ORDER BY id").all() as { id: number; name: string }[];
+  const sessions = sessionRows(db).filter((s) => hw.some((c) => c.id === s.class_id));
+  const oldDays = new Map(hw.map((c) => [c.id, sessions.filter((s) => s.class_id === c.id).map((s) => s.day_of_week)]));
+  const startOf = (id: number) => sessions.find((s) => s.class_id === id)?.start_min ?? null;
+  // 시작 시각별로 묶어 가장 먼저 만든 칸을 남긴다
+  const keepOf = new Map<number, number>();
+  const groups = new Map<number, number[]>();
+  for (const c of hw) {
+    const st = startOf(c.id);
+    if (st === null) continue;
+    groups.set(st, [...(groups.get(st) ?? []), c.id]);
+  }
+  for (const [start, ids] of groups) {
+    const keep = ids[0];
+    for (const id of ids) keepOf.set(id, keep);
+    db.prepare("UPDATE classes SET name = ? WHERE id = ?").run(start < 18 * 60 ? HW_ELEM : HW_MID, keep);
+    for (const other of ids.slice(1)) {
+      for (const s of sessions.filter((x) => x.class_id === other)) {
+        const mine = q(db, "SELECT id FROM timetable_sessions WHERE class_id = ? AND day_of_week = ?").get(keep, s.day_of_week) as { id: number } | undefined;
+        if (mine) {
+          // 같은 요일 줄이 이미 있으면 출결 기록만 옮긴다 (같은 날짜가 겹치면 남아 있는 쪽 기록을 쓴다)
+          db.prepare("UPDATE OR IGNORE attendance_events SET session_id = ? WHERE session_id = ?").run(mine.id, s.id);
+          db.prepare("DELETE FROM timetable_sessions WHERE id = ?").run(s.id);
+        } else db.prepare("UPDATE timetable_sessions SET class_id = ? WHERE id = ?").run(keep, s.id);
+      }
+    }
+    // 월~목 모두
+    const base = q(db, "SELECT * FROM timetable_sessions WHERE class_id = ? ORDER BY id LIMIT 1").get(keep) as {
+      type: string;
+      label: string | null;
+      start_min: number;
+      end_min: number;
+      alpha_start_min: number | null;
+      alpha_end_min: number | null;
+      room_id: number | null;
+      alpha_room_id: number | null;
+      teacher_id: number | null;
+    };
+    for (const d of [1, 2, 3, 4]) {
+      if (q(db, "SELECT 1 FROM timetable_sessions WHERE class_id = ? AND day_of_week = ?").get(keep, d)) continue;
+      db.prepare(
+        `INSERT INTO timetable_sessions (day_of_week, class_id, type, label, start_min, end_min, alpha_start_min, alpha_end_min, room_id, alpha_room_id, teacher_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(d, keep, base.type, base.label, base.start_min, base.end_min, base.alpha_start_min, base.alpha_end_min, base.room_id, base.alpha_room_id, base.teacher_id);
+    }
+  }
+  const ins = db.prepare("INSERT OR IGNORE INTO hw_apply (student_id, slot_class_id, month, day) VALUES (?, ?, ?, ?)");
+  for (const a of oldApply) {
+    const keep = keepOf.get(a.slot_class_id);
+    if (keep) for (const d of oldDays.get(a.slot_class_id) ?? []) ins.run(a.student_id, keep, a.month, d);
+  }
+  for (const [from, to] of keepOf) {
+    if (from === to) continue;
+    db.prepare("UPDATE OR IGNORE hw_plan SET slot_class_id = ? WHERE slot_class_id = ?").run(to, from);
+    db.prepare("UPDATE hw_late SET slot_class_id = ? WHERE slot_class_id = ?").run(to, from);
+    db.prepare("DELETE FROM sr_seats WHERE class_id = ?").run(from);
+    db.prepare("DELETE FROM classes WHERE id = ?").run(from);
+  }
+  db.exec("DELETE FROM hw_forced_slot");
+  rebuildSrSeats(db);
 }
 
 /** 시트의 보강일시 "9/22(화) 15시, 18시" · "과제로 대체 / 9/12(토) 10시" → 회차 목록 (연도는 결석일 기준) */
@@ -640,10 +753,10 @@ export function seedDemo(db: DatabaseSync): void {
   const studentInsert = db.prepare("INSERT INTO students (name, department, active) VALUES (?, ?, 1)");
   const memberInsert = db.prepare("INSERT OR IGNORE INTO student_classes (student_id, class_id) VALUES (?, ?)");
   const roster = loadLocalRoster();
-  const homeworkNames = new Set(HOMEWORK.map((c) => c.name));
+  const homeworkNames = new Set([...HOMEWORK.map((c) => c.name), ...Object.keys(LEGACY_HW)]);
   if (roster) {
     // 실제 명단 — 같은 이름은 한 학생 (동명이인은 명단에서 "홍길동(초4)" 처럼 구분해 둔다)
-    const deptOf = new Map(CLASSES.map((c) => [c.name, c.dept]));
+    const deptOf = new Map<string, "ELEM" | "HIGH">([...CLASSES.map((c) => [c.name, c.dept] as const), ...Object.keys(LEGACY_HW).map((n) => [n, "ELEM"] as const)]);
     const studentDept = new Map<string, "ELEM" | "HIGH">();
     for (const [className, members] of Object.entries(roster)) {
       const dept = deptOf.get(className);
@@ -690,7 +803,7 @@ export function seedDemo(db: DatabaseSync): void {
             day,
             classes[c.name],
             c.type,
-            c.type === "INDIVIDUAL" ? "개별" : c.type === "REGULAR" ? "수업" : "SR 자기주도",
+            c.type === "REGULAR" || c.type === "INDIVIDUAL" ? "수업" : "SR 자기주도",
             toMin(slot.start),
             toMin(slot.end),
             slot.sr ? toMin(slot.sr[0]) : null,

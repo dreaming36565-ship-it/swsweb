@@ -5,13 +5,14 @@
 //   → 안 온 학생: 학생 전화 → (부재중이면) 학부모 전화 → (부재중이면) 어머니께 카톡
 //   → 통화되면 지각(사유+도착예정시간) 또는 결석(사유)
 
-import type { AttendanceRecord, AttStatus, CallState, Checker } from "./types";
+import type { AttendanceRecord, AttStatus, CallState, Checker, SessionType } from "./types";
 
-/** 출결이 시작되는 시각과 1차 체크 담당 — 알파가 먼저면 데스크, 아니면 담당 선생님 */
-export function triggerOf(s: { startMin: number; alphaStartMin: number | null }): {
+/** 출결이 시작되는 시각과 1차 체크 담당 — 알파가 먼저면 데스크, 아니면 담당 선생님. 숙제반은 늘 데스크 */
+export function triggerOf(s: { startMin: number; alphaStartMin: number | null; type?: SessionType }): {
   triggerMin: number;
   checker: Checker;
 } {
+  if (s.type === "HOMEWORK") return { triggerMin: Math.min(s.startMin, s.alphaStartMin ?? s.startMin), checker: "DESK" };
   if (s.alphaStartMin !== null && s.alphaStartMin < s.startMin) {
     return { triggerMin: s.alphaStartMin, checker: "DESK" };
   }

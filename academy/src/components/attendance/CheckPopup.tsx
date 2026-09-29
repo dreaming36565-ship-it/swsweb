@@ -20,12 +20,16 @@ export default function CheckPopup({
   user,
   muted,
   onToggleMute,
+  folded,
+  onToggleFold,
   onDone,
 }: {
   group: AttendanceGroup;
   user: SessionUser;
   muted: boolean;
   onToggleMute: () => void;
+  folded: boolean;
+  onToggleFold: () => void;
   onDone: () => void;
 }) {
   // 미리 등록된 결석은 「결석 연락」 + 사유가 채워진 채로 시작한다
@@ -100,6 +104,9 @@ export default function CheckPopup({
       }
       muted={muted}
       onToggleMute={onToggleMute}
+      folded={folded}
+      onToggleFold={onToggleFold}
+      foldLabel={`${fmtTime(group.triggerMin)} · ${group.events.length}개 반 · ${total}명`}
       error={error}
       note={
         <>

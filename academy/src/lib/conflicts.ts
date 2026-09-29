@@ -23,6 +23,7 @@ export type ConflictSession = {
 
 type Block = {
   sessionId: number;
+  classId: number;
   label: string;
   roomId: number | null;
   roomName: string | null;
@@ -34,6 +35,7 @@ function blocksOf(s: ConflictSession): Block[] {
   const out: Block[] = [
     {
       sessionId: s.id,
+      classId: s.classId,
       label: s.className,
       roomId: s.roomId,
       roomName: s.roomName,
@@ -44,6 +46,7 @@ function blocksOf(s: ConflictSession): Block[] {
   if (s.alphaStartMin !== null && s.alphaEndMin !== null && s.alphaEndMin > s.alphaStartMin) {
     out.push({
       sessionId: s.id,
+      classId: s.classId,
       label: `${s.className} 알파`,
       roomId: s.alphaRoomId,
       roomName: s.alphaRoomName,
@@ -57,10 +60,12 @@ function blocksOf(s: ConflictSession): Block[] {
 /**
  * 같은 요일의 수업들을 받아 충돌을 찾는다.
  * @param srRoomIds SR룸 강의실 id 집합 (좌석 초과 판정용)
+ * @param together 🔗 합반인 두 반인가 — 합반은 같은 강의실 · 같은 선생님이어도 겹침이 아니다
  */
 export function detectConflicts(
   sessions: ConflictSession[],
-  srRoomIds: Set<number> = new Set()
+  srRoomIds: Set<number> = new Set(),
+  together: (classA: number, classB: number) => boolean = () => false
 ): Conflict[] {
   const out: Conflict[] = [];
 
@@ -72,6 +77,7 @@ export function detectConflicts(
       const b = blocks[j];
       if (a.sessionId === b.sessionId) continue;
       if (a.roomId !== b.roomId) continue;
+      if (together(a.classId, b.classId)) continue;
       // SR룸은 좌석 단위로 공용이므로 강의실 중복으로 보지 않는다
       if (a.roomId !== null && srRoomIds.has(a.roomId)) continue;
       if (!overlaps(a.start, a.end, b.start, b.end)) continue;
@@ -89,6 +95,7 @@ export function detectConflicts(
       const a = sessions[i];
       const b = sessions[j];
       if (!a.teacherId || !b.teacherId || a.teacherId !== b.teacherId) continue;
+      if (together(a.classId, b.classId)) continue;
       if (!overlaps(a.startMin, a.endMin, b.startMin, b.endMin)) continue;
       out.push({
         kind: "TEACHER",

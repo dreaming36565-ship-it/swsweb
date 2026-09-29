@@ -12,15 +12,17 @@ import {
   MARKS,
   MARK_LIST,
   addDays,
+  applyLabel,
   certIssues,
+  certUnchecked,
+  clashOn,
   datesBetween,
-  defaultForcedSlot,
   defaultPlan,
   dowOf,
   md,
   monthDates,
+  partNo,
   quarterOf,
-  slotClashes,
   timeline,
   type Cycle,
   type HwPlan,
@@ -45,7 +47,9 @@ const MARK_CLS: Record<Mark, string> = {
 };
 const GRADE_SORT = ["초등피팅", "초4", "초5", "초6", "중등피팅", "중1", "중2", "중3"];
 const mdw = (s: string) => `${md(s)}(${DAY_LABELS[dowOf(s)]})`;
-const slotLabel = (s: HwSlot) => `${s.days.map((d) => DAY_LABELS[d]).join("")} ${rangeLabel(s.start, s.end)}`;
+/** 「1부 초등숙제반 시간 오후 4:00 ~ 6:00」 */
+const slotLabel = (slots: HwSlot[], s: HwSlot) => `${partNo(slots, s)}부 ${s.name} ${rangeLabel(s.start, s.end)}`;
+const HW_DAYS = [1, 2, 3, 4];
 
 export default function HomeworkClient({ user, initialView }: { user: SessionUser; initialView?: string }) {
   const [data, setData] = useState<HomeworkData | null>(null);
@@ -55,7 +59,7 @@ export default function HomeworkClient({ user, initialView }: { user: SessionUse
   const [mine, setMine] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [modal, setModal] = useState<{ kind: "plan" | "slot" | "late" | "apply" | "form"; studentId?: number; lateId?: number } | null>(null);
+  const [modal, setModal] = useState<{ kind: "plan" | "late" | "apply" | "form"; studentId?: number; lateId?: number } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -140,9 +144,8 @@ export default function HomeworkClient({ user, initialView }: { user: SessionUse
         <ClassView user={user} data={data} h={h} month={month} setMonth={setMonth} months={months} act={act} open={setModal} />
       )}
       {data && h && modal?.kind === "plan" && modal.studentId ? <PlanModal data={data} h={h} studentId={modal.studentId} act={act} onClose={() => setModal(null)} /> : null}
-      {data && h && modal?.kind === "slot" && modal.studentId ? <SlotModal data={data} h={h} studentId={modal.studentId} act={act} onClose={() => setModal(null)} /> : null}
       {data && h && modal?.kind === "late" && modal.lateId ? <LateModal data={data} h={h} lateId={modal.lateId} act={act} onClose={() => setModal(null)} /> : null}
-      {data && h && modal?.kind === "apply" ? <ApplyModal data={data} h={h} months={months} act={act} onClose={() => setModal(null)} onMonth={setMonth} /> : null}
+      {data && h && modal?.kind === "apply" ? <ApplyModal data={data} h={h} months={months} studentId={modal.studentId} month={month} act={act} onClose={() => setModal(null)} onMonth={setMonth} /> : null}
       {data && modal?.kind === "form" ? <FormModal data={data} month={month} months={months} act={act} onClose={() => setModal(null)} /> : null}
       {toast ? <div className="fixed bottom-6 left-1/2 z-[90] -translate-x-1/2 rounded-xl bg-navy-900 px-5 py-2.5 text-sm font-semibold text-white">{toast}</div> : null}
     </div>
@@ -188,15 +191,12 @@ function makeHelpers(data: HomeworkData) {
     return t;
   };
   const busy = (st: Student) => (d: number) => (st.busy[d] ?? []) as [number, number][];
-  const applyingSlot = (st: Student, ym: string) => data.apply.find((a) => a.studentId === st.id && a.month === ym)?.slotId ?? null;
-  const forcedSlotOf = (st: Student): HwSlot | null => {
-    const fixed = data.forcedSlot.find((f) => f.studentId === st.id);
-    if (fixed) return data.slots.find((s) => s.id === fixed.slotId) ?? null;
-    return defaultForcedSlot(data.slots, { applyingSlotId: applyingSlot(st, today.slice(0, 7)), regularDays: st.regular?.days ?? [], busy: busy(st) });
-  };
+  /** 그 달 신청 — 요일마다 1부 · 2부 */
+  const applyOf = (studentId: number, ym: string) => data.apply.filter((a) => a.studentId === studentId && a.month === ym);
   const planOf = (st: Student): HwPlan => {
     const rows = data.plans.filter((p) => p.studentId === st.id);
-    if (!rows.length) return defaultPlan(forcedSlotOf(st));
+    if (!rows.length)
+      return defaultPlan(data.slots, { applying: applyOf(st.id, today.slice(0, 7)), regularDays: st.regular?.days ?? [], busy: busy(st), level: st.regular?.level ?? null });
     const p: HwPlan = {};
     for (const r of rows) p[r.day] = r.how === "CERT" ? { how: "CERT" } : { how: "ATTEND", slotId: r.slotId ?? 0 };
     return p;
@@ -210,7 +210,9 @@ function makeHelpers(data: HomeworkData) {
     return [by("ATTEND") && `${by("ATTEND")} 🏫`, by("CERT") && `${by("CERT")} 📷`].filter(Boolean).join(" · ") || "—";
   };
   const issues = (st: Student, c: Cycle, ym: string) => certIssues(cert.get(st.id) ?? new Map(), c, ym);
-  return { today, marks, cert, student, tl, busy, forcedSlotOf, planOf, planLabel, issues, applyingSlot };
+  /** 📷 확인 안 한 인증 날 (어제까지) */
+  const unchecked = (st: Student, c: Cycle) => certUnchecked(planOf(st), c, cert.get(st.id) ?? new Map(), today);
+  return { today, marks, cert, student, tl, busy, planOf, planLabel, issues, applyOf, unchecked };
 }
 
 const Legend = () => (
@@ -281,7 +283,11 @@ function CheckView({
     <>
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-present-soft bg-present-soft px-4 py-2.5 text-[13px] text-navy-800">
         <span>
-          빈칸 = 숙제 완료 · 카운트 <b>2가 되는 순간 강제 숙제반</b> 자동 등록 · 분기마다 0부터 · 초중등만
+          빈칸 = 숙제 완료 · 카운트 <b>2가 되는 순간 강제 숙제반</b> 자동 등록 · 초중등만 ·{" "}
+          <b>
+            {quarterOf(`${month}-01`).label}({Number(quarterOf(`${month}-01`).start.slice(5, 7))}~{Number(quarterOf(`${month}-01`).end.slice(5, 7))}월) 누적
+          </b>{" "}
+          — 카운트 · 지각은 다음 분기로 넘어가지 않고 0부터
         </span>
         <Legend />
       </div>
@@ -352,7 +358,7 @@ function CheckView({
                       <td
                         key={d}
                         title={v}
-                        className={`h-7 border border-line p-0 text-center ${ind ? "bg-late-soft" : ""} ${v ? MARK_CLS[v as Mark] : ""} ${d === data.today ? "outline outline-2 -outline-offset-2 outline-now" : ""}`}
+                        className={`h-7 border border-line p-0 text-center ${v ? MARK_CLS[v as Mark] : ind ? "bg-late-soft" : ""} ${d === data.today ? "outline outline-2 -outline-offset-2 outline-now" : ""}`}
                       >
                         <select
                           disabled={!edit}
@@ -412,9 +418,12 @@ function ClassView({
   setMonth: (m: string) => void;
   months: string[];
   act: Act;
-  open: (m: { kind: "plan" | "slot" | "late"; studentId?: number; lateId?: number }) => void;
+  open: (m: { kind: "plan" | "late" | "apply"; studentId?: number; lateId?: number }) => void;
 }) {
   const edit = can(user, "homework.class");
+  /** 📷 인증 확인 — 담당T(내 반) · 관리자 · 데스크 */
+  const certEdit = (st: Student) =>
+    can(user, "homework.cert") && (hasRole(user, "ADMIN") || hasRole(user, "DESK") || st.regular?.teacherId === user.id);
   const days = monthDates(month);
   const end = days[days.length - 1];
   const rows: { st: Student; c: Cycle; i: number; total: number }[] = [];
@@ -428,27 +437,44 @@ function ClassView({
   const seen = (st: Student, start: string) => data.seen.some((s) => s.studentId === st.id && s.start === start);
   const newForced = rows.filter((r) => !r.c.gradAt && r.c.start >= addDays(data.today, -7) && !seen(r.st, r.c.start));
   const lateTodo = data.late.filter((l) => !l.done && !l.date);
+  // 지각 「횟수」는 분기마다 0부터지만, 3회를 채워 이미 생긴 숙제반 1회는 다음 분기로 넘어간다
+  const qStart = quarterOf(data.today).start;
+  const carried = (l: { lates: string[]; done: boolean }) =>
+    !l.done && l.lates.length > 0 && l.lates[l.lates.length - 1] < qStart ? (
+      <span className="ml-1 rounded bg-navy-100 px-1 text-[11px] font-extrabold text-navy-800">지난 분기에서 넘어옴</span>
+    ) : null;
   const misuse = rows.filter((r) => !r.c.gradAt).map((r) => ({ ...r, issues: h.issues(r.st, r.c, month) })).filter((r) => r.issues.length);
+  // 📷 확인 안 한 인증 — 내가 확인할 수 있는 학생만 (선생님 = 내 반)
+  const certTodo = rows
+    .filter((r) => !r.c.gradAt && certEdit(r.st))
+    .map((r) => ({ ...r, miss: h.unchecked(r.st, r.c) }))
+    .filter((r) => r.miss.length);
   const name = (id: number) => data.students.find((s) => s.id === id)?.name ?? "";
   const tag = "inline-block rounded-md px-1.5 py-px text-xs font-extrabold mr-1";
 
   return (
     <>
-      {newForced.length || lateTodo.length || misuse.length ? (
+      {newForced.length || lateTodo.length || misuse.length || certTodo.length ? (
         <div className="card px-4 py-2.5">
           <b>🔔 할 일</b>
+          {certTodo.map((r) => (
+            <div key={`c${r.st.id}`} className="mt-1.5 rounded-lg border border-alert px-3 py-1.5 text-[13px]">
+              <span className={`${tag} bg-alert-soft text-alert`}>📷 확인</span>
+              <b>{r.st.name}</b>({r.st.regular?.name}) {r.miss.map(mdw).join(", ")} 인증 확인 안 됨 →{" "}
+              <b>아래 표 📷? 칸을 눌러 인증됨 / 미인증</b> <span className="text-muted">· {teacherLabel(r.st.teacherName)}</span>
+            </div>
+          ))}
           {newForced.map((r) => {
-            const slot = h.forcedSlotOf(r.st);
             return (
               <div key={`${r.st.id}-${r.c.start}`} className="mt-1.5 flex items-center justify-between gap-2 rounded-lg border border-line px-3 py-1.5 text-[13px]">
                 <span>
                   <span className={`${tag} bg-alert-soft text-alert`}>강제</span>
-                  <b>{r.st.name}</b>({r.st.regular?.name}) {md(r.c.start)} 카운트 {r.c.startCount} → 자동 등록 · <b>{slot ? slotLabel(slot) : "요일 정하기"}</b>{" "}
+                  <b>{r.st.name}</b>({r.st.regular?.name}) {md(r.c.start)} 카운트 {r.c.startCount} → 자동 등록 · <b>{h.planLabel(h.planOf(r.st))}</b>{" "}
                   <span className="text-muted">· {teacherLabel(r.st.teacherName)} 알림 보냄</span>
                 </span>
                 {edit ? (
                   <span className="flex gap-1">
-                    <button type="button" className="btn px-2 py-0.5 text-xs" onClick={() => open({ kind: "slot", studentId: r.st.id })}>
+                    <button type="button" className="btn px-2 py-0.5 text-xs" onClick={() => open({ kind: "plan", studentId: r.st.id })}>
                       요일 바꾸기
                     </button>
                     <button type="button" className="btn px-2 py-0.5 text-xs" onClick={() => void act({ action: "SEEN", studentId: r.st.id, start: r.c.start })}>
@@ -464,6 +490,7 @@ function ClassView({
               <span>
                 <span className={`${tag} bg-late-soft text-late`}>지각</span>
                 <b>{name(l.studentId)}</b> 지각 3회 ({l.lates.map(md).join(", ")}) → 숙제반 1회 · <b className="text-alert">날짜 정하기</b>
+                {carried(l)}
               </span>
               {edit ? (
                 <button type="button" className="btn btn-primary px-2 py-0.5 text-xs" onClick={() => open({ kind: "late", lateId: l.id })}>
@@ -603,9 +630,9 @@ function ClassView({
                           </>
                         );
                         bg = "bg-present-soft";
-                        title = "숙제반 참석 (출결은 올리미)";
+                        title = "숙제반 참석 (출결은 데스크)";
                       }
-                      const clickable = how === "CERT" && d <= data.today && edit;
+                      const clickable = how === "CERT" && d <= data.today && certEdit(st);
                       if (how === "CERT") {
                         const past = d <= data.today;
                         inner = (
@@ -646,33 +673,57 @@ function ClassView({
 
       <div className="grid grid-cols-[1.4fr_1fr] gap-3">
         <div className="card px-4 py-2.5">
-          <b className="text-[15px]">🙋 신청 숙제반 — {Number(month.slice(5))}월</b> <span className="text-xs text-muted">출결은 올리미 · 한 달 단위 신청</span>
-          {data.slots.map((s) => {
-            const list = data.apply.filter((a) => a.slotId === s.id && a.month === month);
-            return (
-              <div key={s.id} className="mt-1.5 flex items-start gap-2 rounded-lg border border-line px-3 py-1.5 text-[13px]">
-                <b className="min-w-[170px]">{slotLabel(s)}</b>
-                <span className="flex-1">
-                  {list.length === 0 ? <span className="text-muted">없음</span> : null}
-                  {list.map((a) => {
-                    const st = h.student(a.studentId);
-                    const f = st ? h.tl(st, month).cur : null;
-                    return (
-                      <span key={a.studentId} className="m-0.5 inline-flex items-center gap-1 rounded-full border border-line px-2.5 py-0.5 text-[13px] font-bold">
-                        {st?.name ?? ""} <span className="font-medium text-muted">{st?.regular?.name ?? ""}</span>
-                        {f ? <span className="rounded bg-alert-soft px-1 text-[11px] text-alert">강제도 🔥</span> : null}
-                        {edit ? (
-                          <button type="button" className="text-muted" title="신청 취소" onClick={() => void act({ action: "UNAPPLY", studentId: a.studentId, slotId: s.id, month })}>
-                            ✕
-                          </button>
-                        ) : null}
-                      </span>
-                    );
-                  })}
-                </span>
-              </div>
-            );
-          })}
+          <b className="text-[15px]">🙋 신청 숙제반 — {Number(month.slice(5))}월</b> <span className="text-xs text-muted">출결 = 데스크 · 한 달 단위 신청</span>
+          {data.slots.length === 0 ? <p className="text-sm text-muted">반 관리에 숙제반이 없어요.</p> : null}
+          <table className="mt-1.5 w-full table-fixed border-collapse text-[13px]">
+            <thead>
+              <tr>
+                <th className="w-12 border border-line bg-navy-50 py-1 text-xs text-muted">요일</th>
+                {[...data.slots]
+                  .sort((x, y) => x.start - y.start)
+                  .map((sl) => (
+                    <th key={sl.id} className="border border-line bg-navy-50 py-1 text-xs text-muted">
+                      {slotLabel(data.slots, sl)}
+                    </th>
+                  ))}
+              </tr>
+            </thead>
+            <tbody>
+              {HW_DAYS.map((d) => (
+                <tr key={d}>
+                  <th className="border border-line bg-navy-50 text-sm">{DAY_LABELS[d]}</th>
+                  {[...data.slots]
+                    .sort((x, y) => x.start - y.start)
+                    .map((sl) => {
+                      const list = data.apply.filter((a) => a.slotId === sl.id && a.month === month && a.day === d);
+                      return (
+                        <td key={sl.id} className="border border-line px-1.5 py-1 align-top">
+                          {!sl.days.includes(d) ? <span className="text-xs text-muted">없음</span> : list.length === 0 ? <span className="text-xs text-muted">—</span> : null}
+                          {list.map((a) => {
+                            const st = h.student(a.studentId);
+                            const f = st ? h.tl(st, month).cur : null;
+                            return (
+                              <button
+                                key={a.studentId}
+                                type="button"
+                                disabled={!edit}
+                                title={edit ? "눌러서 요일 · 시간 고치기" : undefined}
+                                onClick={() => open({ kind: "apply", studentId: a.studentId })}
+                                className="m-0.5 inline-flex items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[13px] font-bold enabled:hover:bg-navy-50"
+                              >
+                                {st?.name ?? ""} <span className="font-medium text-muted">{st?.regular?.name ?? ""}</span>
+                                {f ? <span className="rounded bg-alert-soft px-1 text-[11px] text-alert">강제도 🔥</span> : null}
+                              </button>
+                            );
+                          })}
+                        </td>
+                      );
+                    })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-1 text-xs text-muted">요일마다 1부 · 2부 중 하나를 골라요. 이름을 누르면 고칠 수 있어요.</p>
         </div>
         <div className="card px-4 py-2.5">
           <b className="text-[15px]">⏰ 지각 3회 → 숙제반 1회</b>
@@ -685,6 +736,7 @@ function ClassView({
                 <div key={l.id} className="mt-1.5 flex items-center justify-between gap-2 rounded-lg border border-line px-3 py-1.5 text-[13px]">
                   <span>
                     <b>{name(l.studentId)}</b> <span className="text-muted">지각 {l.lates.map(md).join(", ")}</span>
+                    {carried(l)}
                   </span>
                   <span className="flex items-center gap-1">
                     {l.date ? (
@@ -748,7 +800,7 @@ function PlanModal({ data, h, studentId, act, onClose }: { data: HomeworkData; h
             </label>
             {opts.map((s) => (
               <label key={s.id} className="flex items-center gap-1">
-                <input type="radio" checked={cur?.how === "ATTEND" && cur.slotId === s.id} onChange={() => set({ how: "ATTEND", slotId: s.id })} /> 🏫 {rangeLabel(s.start, s.end)}
+                <input type="radio" checked={cur?.how === "ATTEND" && cur.slotId === s.id} onChange={() => set({ how: "ATTEND", slotId: s.id })} /> 🏫 {partNo(data.slots, s)}부 {rangeLabel(s.start, s.end)}
               </label>
             ))}
             {opts.length === 0 ? <span className="text-xs text-muted">이 요일 숙제반 없음</span> : null}
@@ -761,42 +813,6 @@ function PlanModal({ data, h, studentId, act, onClose }: { data: HomeworkData; h
       <p className="mt-2 text-xs text-muted">
         어느 방법이든 <b>성공 판정은 SR 숙제검사</b>예요. 인증 문제(인증 후 SR 미흡 · 미인증) 1회 = 경고, 2회부터 그 달은 인증 요일도 숙제반 참석.
       </p>
-    </Modal>
-  );
-}
-
-function SlotModal({ data, h, studentId, act, onClose }: { data: HomeworkData; h: Helpers; studentId: number; act: Act; onClose: () => void }) {
-  const st = h.student(studentId)!;
-  const cur = h.forcedSlotOf(st);
-  const [pick, setPick] = useState<number | null>(cur?.id ?? null);
-  return (
-    <Modal
-      open
-      width={520}
-      title={`${st.name} 강제 숙제반 요일`}
-      onClose={onClose}
-      footer={
-        <>
-          <button type="button" className="btn" onClick={onClose}>
-            취소
-          </button>
-          <button type="button" className="btn btn-primary" disabled={!pick} onClick={() => void act({ action: "FORCED_SLOT", studentId, slotId: pick }, "바꿨어요 — SR 자리도 함께").then((ok) => ok && onClose())}>
-            저장
-          </button>
-        </>
-      }
-    >
-      {data.slots.map((s) => {
-        const clash = slotClashes(s, h.busy(st));
-        return (
-          <label key={s.id} className="mb-1.5 flex cursor-pointer items-center justify-between rounded-lg border border-line px-3 py-2 text-sm">
-            <span>
-              <input type="radio" disabled={clash} checked={pick === s.id} onChange={() => setPick(s.id)} /> <b>{slotLabel(s)}</b>
-            </span>
-            {clash ? <span className="text-xs text-muted">수업·SR과 겹쳐요</span> : null}
-          </label>
-        );
-      })}
     </Modal>
   );
 }
@@ -838,7 +854,7 @@ function LateModal({ data, h, lateId, act, onClose }: { data: HomeworkData; h: H
         {opts.map((o, i) => (
           <label key={`${o.d}-${o.s.id}`} className="mb-1.5 flex cursor-pointer items-center justify-between rounded-lg border border-line px-3 py-2 text-sm">
             <span>
-              <input type="radio" disabled={o.clash} checked={pick === i} onChange={() => setPick(i)} /> <b>{mdw(o.d)}</b> {rangeLabel(o.s.start, o.s.end)}
+              <input type="radio" disabled={o.clash} checked={pick === i} onChange={() => setPick(i)} /> <b>{mdw(o.d)}</b> {partNo(data.slots, o.s)}부 {rangeLabel(o.s.start, o.s.end)}
             </span>
             {o.clash ? <span className="text-xs text-muted">수업과 겹쳐요</span> : null}
           </label>
@@ -848,18 +864,48 @@ function LateModal({ data, h, lateId, act, onClose }: { data: HomeworkData; h: H
   );
 }
 
-function ApplyModal({ data, h, months, act, onClose, onMonth }: { data: HomeworkData; h: Helpers; months: string[]; act: Act; onClose: () => void; onMonth: (m: string) => void }) {
-  const [name, setName] = useState("");
-  const [slotId, setSlotId] = useState<number>(data.slots[0]?.id ?? 0);
+/** 🙋 신청 등록 · 고치기 — 월~목 요일마다 없음 / 1부 / 2부 */
+function ApplyModal({
+  data,
+  h,
+  months,
+  studentId,
+  month: initMonth,
+  act,
+  onClose,
+  onMonth,
+}: {
+  data: HomeworkData;
+  h: Helpers;
+  months: string[];
+  studentId?: number;
+  month: string;
+  act: Act;
+  onClose: () => void;
+  onMonth: (m: string) => void;
+}) {
   const future = months.filter((m) => m >= data.today.slice(0, 7));
-  const [month, setMonth] = useState(future[0] ?? data.today.slice(0, 7));
+  const [name, setName] = useState(() => (studentId ? h.student(studentId)?.name ?? "" : ""));
+  const [month, setMonth] = useState(() => (studentId && initMonth ? initMonth : future[0] ?? data.today.slice(0, 7)));
+  const st = data.students.find((s) => s.name === name.trim()) ?? null;
+  const [picks, setPicks] = useState<Record<number, number | undefined>>({});
   const [error, setError] = useState<string | null>(null);
+  // 학생 · 달이 바뀌면 이미 신청한 요일로 채운다
+  useEffect(() => {
+    const cur: Record<number, number> = {};
+    if (st) for (const a of h.applyOf(st.id, month)) cur[a.day] = a.slotId;
+    setPicks(cur);
+  }, [st?.id, month, h]);
+  const slots = [...data.slots].sort((a, b) => a.start - b.start);
+  const list = Object.entries(picks)
+    .filter(([, v]) => v)
+    .map(([d, v]) => ({ day: Number(d), slotId: v! }));
   const save = async () => {
-    const st = data.students.find((s) => s.name === name.trim());
     if (!st) return setError("학생 이름을 목록에서 골라 주세요.");
-    const slot = data.slots.find((s) => s.id === slotId);
-    if (slot && slotClashes(slot, h.busy(st))) return setError("그 시간은 수업·SR과 겹쳐요.");
-    const ok = await act({ action: "APPLY", studentId: st.id, slotId, month }, `${st.name} ${Number(month.slice(5))}월 신청 등록`);
+    const had = h.applyOf(st.id, month).length > 0;
+    if (!list.length && !had) return setError("요일을 하나 이상 골라 주세요.");
+    const msg = list.length ? `${st.name} ${Number(month.slice(5))}월 ${applyLabel(data.slots, list)}` : `${st.name} ${Number(month.slice(5))}월 신청 취소`;
+    const ok = await act({ action: "APPLY", studentId: st.id, month, picks: list }, msg);
     if (ok) {
       onMonth(month);
       onClose();
@@ -868,8 +914,9 @@ function ApplyModal({ data, h, months, act, onClose, onMonth }: { data: Homework
   return (
     <Modal
       open
-      width={460}
-      title="🙋 숙제반 신청 등록"
+      width={620}
+      title={studentId ? "🙋 숙제반 신청 고치기" : "🙋 숙제반 신청 등록"}
+      subtitle="월~목 · 요일마다 1부(초등숙제반 시간) 또는 2부(중등숙제반 시간)"
       onClose={onClose}
       footer={
         <>
@@ -877,40 +924,70 @@ function ApplyModal({ data, h, months, act, onClose, onMonth }: { data: Homework
             취소
           </button>
           <button type="button" className="btn btn-primary" onClick={() => void save()}>
-            등록
+            {list.length || !st || !h.applyOf(st.id, month).length ? "저장" : "신청 취소"}
           </button>
         </>
       }
     >
-      <label className="label">학생</label>
-      <input className="field" list="hw-names" placeholder="이름" value={name} onChange={(e) => setName(e.target.value)} />
-      <datalist id="hw-names">
-        {data.students.map((s) => (
-          <option key={s.id} value={s.name} />
-        ))}
-      </datalist>
-      <label className="label mt-2.5">요일 · 시간</label>
-      <select className="field" value={slotId} onChange={(e) => setSlotId(Number(e.target.value))}>
-        {data.slots.map((s) => (
-          <option key={s.id} value={s.id}>
-            {slotLabel(s)}
-          </option>
-        ))}
-      </select>
-      <label className="label mt-2.5">달</label>
-      <select className="field" value={month} onChange={(e) => setMonth(e.target.value)}>
-        {future.map((m) => (
-          <option key={m} value={m}>
-            {Number(m.slice(5))}월
-          </option>
-        ))}
-      </select>
+      <div className="grid grid-cols-[1fr_120px] gap-2">
+        <div>
+          <label className="label">학생</label>
+          <input className="field" list="hw-names" placeholder="이름" value={name} onChange={(e) => setName(e.target.value)} disabled={!!studentId} />
+          <datalist id="hw-names">
+            {data.students.map((s) => (
+              <option key={s.id} value={s.name} />
+            ))}
+          </datalist>
+        </div>
+        <div>
+          <label className="label">달</label>
+          <select className="field" value={month} onChange={(e) => setMonth(e.target.value)}>
+            {(future.includes(month) ? future : [month, ...future]).map((m) => (
+              <option key={m} value={m}>
+                {Number(m.slice(5))}월
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div className="mt-3 space-y-1.5">
+        {HW_DAYS.map((d) => {
+          const cur = picks[d];
+          const set = (v: number | undefined) => setPicks((p) => ({ ...p, [d]: v }));
+          return (
+            <div key={d} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm">
+              <b className="w-6">{DAY_LABELS[d]}</b>
+              <button type="button" className={`btn px-2.5 py-1 text-xs ${!cur ? "btn-primary" : ""}`} onClick={() => set(undefined)}>
+                없음
+              </button>
+              {slots
+                .filter((s) => s.days.includes(d))
+                .map((s) => {
+                  const clash = st ? clashOn(s, d, h.busy(st)) : false;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      disabled={clash}
+                      title={clash ? "수업·SR과 겹쳐요" : undefined}
+                      className={`btn px-2.5 py-1 text-xs ${cur === s.id ? "btn-primary" : ""} disabled:opacity-40`}
+                      onClick={() => set(s.id)}
+                    >
+                      {partNo(data.slots, s)}부 {s.name.replace(" 시간", "")} {rangeLabel(s.start, s.end)}
+                      {clash ? " · 겹침" : ""}
+                    </button>
+                  );
+                })}
+            </div>
+          );
+        })}
+      </div>
       {error ? <p className="mt-2 text-sm font-semibold text-alert">{error}</p> : null}
     </Modal>
   );
 }
 
-type FormRow = { name: string; className: string; dayText: string; studentId: number | null; slotId: number | null; already: boolean; note: string };
+type FormRow = { name: string; className: string; dayText: string; studentId: number | null; picks: { day: number; slotId: number }[] | null; already: boolean; note: string };
 
 function FormModal({ data, month, months, act, onClose }: { data: HomeworkData; month: string; months: string[]; act: Act; onClose: () => void }) {
   const [m, setM] = useState(month);
@@ -928,7 +1005,7 @@ function FormModal({ data, month, months, act, onClose }: { data: HomeworkData; 
       setLoading(false);
     }
   };
-  const ready = (rows ?? []).filter((r) => r.studentId && r.slotId && !r.already);
+  const ready = (rows ?? []).filter((r) => r.studentId && r.picks && !r.already && !r.note);
   return (
     <Modal
       open
@@ -945,7 +1022,7 @@ function FormModal({ data, month, months, act, onClose }: { data: HomeworkData; 
             type="button"
             className="btn btn-primary"
             disabled={!ready.length}
-            onClick={() => void act({ action: "FORM_APPLY", month: m, rows: ready.map((r) => ({ studentId: r.studentId, slotId: r.slotId })) }, `${ready.length}명 신청 명단에 넣었어요`).then((ok) => ok && onClose())}
+            onClick={() => void act({ action: "FORM_APPLY", month: m, rows: ready.map((r) => ({ studentId: r.studentId, picks: r.picks })) }, `${ready.length}명 신청 명단에 넣었어요`).then((ok) => ok && onClose())}
           >
             {ready.length}명 넣기
           </button>
@@ -986,7 +1063,7 @@ function FormModal({ data, month, months, act, onClose }: { data: HomeworkData; 
                 <td className="px-2 py-1.5 font-bold">{r.name}</td>
                 <td className="px-2 py-1.5">{r.className}</td>
                 <td className="px-2 py-1.5">{r.dayText}</td>
-                <td className="px-2 py-1.5">{r.slotId ? slotLabel(data.slots.find((s) => s.id === r.slotId)!) : "—"}</td>
+                <td className="px-2 py-1.5">{r.picks ? applyLabel(data.slots, r.picks) : "—"}</td>
                 <td className="px-2 py-1.5">{r.already ? <span className="text-muted">이미 신청</span> : r.note ? <b className="text-alert">{r.note}</b> : <b className="text-present">넣을 수 있음</b>}</td>
               </tr>
             ))}

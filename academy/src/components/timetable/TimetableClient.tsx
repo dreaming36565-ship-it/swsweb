@@ -30,6 +30,8 @@ export type TimetableData = {
   alertOk: string[];
   conflicts: { day: number; list: Conflict[] }[];
   seats: { classId: number; studentId: number; seat: string; manual: boolean }[];
+  /** 오늘 결석 (미리 등록 · 출결 결석) — classId 가 없으면 그날 모든 반 */
+  absents: { studentId: number; classId: number | null; reason: string }[];
 };
 
 /** 화면 곳곳에서 쓰는 것들 */

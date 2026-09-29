@@ -53,6 +53,8 @@ export type PlanInput = {
   existing: { classId: number; studentId: number; seat: string; manual: boolean }[];
   /** 월초 정리: 사람이 옮긴 자리만 남기고, 반마다 쓰던 열 안에서 앞자리부터 다시 채운다 */
   pack?: boolean;
+  /** 🔗 합반 짝 (반id → 짝 반id) — 짝이 앉은 열에 이어서 앉힌다 */
+  partners?: Map<number, number>;
 };
 
 export type PlanResult = {
@@ -130,6 +132,10 @@ export function planSeats(input: PlanInput): PlanResult {
     // 이미 앉은 친구가 있으면 그 열부터 채운다
     const mine = colsOf(c.id);
     if (!best && mine.length && room(mine) >= todo.length) best = { cols: mine, score: -1 };
+    // 🔗 합반은 짝이 앉은 열에 이어서 (짝의 자리는 겹치는 시간이라 이미 차 있으니 그 뒤부터)
+    const partner = input.partners?.get(c.id);
+    const pCols = partner !== undefined ? colsOf(partner) : [];
+    if (!best && pCols.length && room(pCols) >= todo.length) best = { cols: pCols, score: -1 };
     if (!best) {
       const options: string[][] = [];
       for (const c1 of SEAT_COLS) {

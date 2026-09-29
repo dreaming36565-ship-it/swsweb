@@ -1,6 +1,6 @@
 import { readJson, withUser } from "@/lib/api";
 import { assert } from "@/lib/errors";
-import { srAddAdhoc, srAnswer, srDeleteAdhoc, srMission, srMove, srPack, srRequest, srToggleLeave } from "@/lib/repo";
+import { srAddAdhoc, srAnswer, srDeleteAdhoc, srMission, srMissionCheck, srMove, srPack, srRequest, srToggleLeave } from "@/lib/repo";
 
 type Body =
   /** ↔ 자리 바꾸기 (데스크·관리자) */
@@ -16,6 +16,8 @@ type Body =
   | { action: "LEAVE"; classId: number; studentId: number }
   /** 📄 미션지 */
   | { action: "MISSION"; classId: number; kind: "RECEIVE" | "CANCEL" | "REQUEST" | "DONE" }
+  /** 📄 미션지 확인 — 있는 반 받음 + 없는 반 요청을 한 번에 */
+  | { action: "MISSION_CHECK"; have: number[]; missing: number[] }
   /** 🧹 월초 자리 정리 */
   | { action: "PACK" };
 
@@ -42,6 +44,9 @@ export const POST = withUser(async ({ user, req }) => {
       break;
     case "MISSION":
       srMission(user, b.classId, b.kind);
+      break;
+    case "MISSION_CHECK":
+      srMissionCheck(user, b.have ?? [], b.missing ?? []);
       break;
     case "PACK":
       srPack(user);

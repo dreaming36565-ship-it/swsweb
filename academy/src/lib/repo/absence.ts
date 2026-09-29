@@ -83,7 +83,9 @@ export function listAbsences(opts: { ids?: number[]; studentId?: number } = {}):
     args.push(opts.studentId);
   }
   sql += " ORDER BY date, student_name, id";
-  const list = rows<AbsRow>(db.prepare(sql).all(...args));
+  // 고등부 선생님이 맡은 반은 중등 반이어도 고등부 규칙 (드림플러스 없음 · 이 앱에만 기록)
+  const teacherDept = new Map(rows<{ id: number; department: string }>(db.prepare("SELECT id, department FROM users").all()).map((u) => [u.id, u.department]));
+  const list = rows<AbsRow>(db.prepare(sql).all(...args)).map((r) => ({ ...r, department: (r.teacher_id && teacherDept.get(r.teacher_id)) || r.department }));
   const rounds = new Map<number, Absence["rounds"]>();
   for (const r of rows<{ absence_id: number; id: number; type: string; date: string | null; start_min: number | null; state: string }>(
     db.prepare("SELECT absence_id, id, type, date, start_min, state FROM absence_rounds ORDER BY id").all(),
@@ -192,6 +194,15 @@ export function preRegisteredOn(date: string, classId: number): Map<number, { re
     rows<{ student_id: number; reason: string; cat: string | null }>(
       getDb().prepare("SELECT student_id, reason, cat FROM absences WHERE date = ? AND class_id = ? AND student_id IS NOT NULL").all(date, classId),
     ).map((r) => [r.student_id, { reason: r.reason, cat: (r.cat as AbsenceCat | null) ?? null }]),
+  );
+}
+
+/** 그 날짜 결석 (미리 등록 · 출결 결석 모두) — 학생 찾기 「결석」 표시 · SR 빈자리. classId 가 없으면 그날 모든 반 */
+export function absentOn(date: string): { studentId: number; classId: number | null; reason: string }[] {
+  return rows<{ studentId: number; classId: number | null; reason: string }>(
+    getDb()
+      .prepare("SELECT student_id AS studentId, class_id AS classId, reason FROM absences WHERE date = ? AND student_id IS NOT NULL")
+      .all(date),
   );
 }
 

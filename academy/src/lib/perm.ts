@@ -39,8 +39,10 @@ export const PERMISSIONS = {
   "absence.judge": ["ADMIN"],
   /** 숙제검사 기입 (선생님은 내 반만) */
   "homework.check": ["ADMIN", "TEACHER", "DESK"],
-  /** 숙제반 관리 (요일 · 인증 · 신청 등록) */
+  /** 숙제반 관리 (요일 · 신청 등록 · 지각 숙제반) */
   "homework.class": ["ADMIN", "DESK"],
+  /** 📷 숙제인증 확인 (선생님은 내 반만 — 미확인이면 담당T에게 알림) */
+  "homework.cert": ["ADMIN", "TEACHER", "DESK"],
   "users.write": ["ADMIN"],
   "notices.write": ["ADMIN"],
   "tasks.write": ["ADMIN"],

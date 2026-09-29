@@ -1,15 +1,13 @@
 import { readJson, strParam, withUser } from "@/lib/api";
 import { assert } from "@/lib/errors";
 import {
-  addApply,
   applyFormRows,
   homeworkData,
   markSeen,
   readFormResponses,
-  removeApply,
+  saveApply,
   savePlan,
   setCert,
-  setForcedSlot,
   setFormUrl,
   setLateDate,
   setLateDone,
@@ -28,14 +26,12 @@ type Body =
   | { action: "MARK"; studentId: number; date: string; mark: string | null }
   | { action: "CERT"; studentId: number; date: string; state: "OK" | "MISS" | null }
   | { action: "PLAN"; studentId: number; plan: HwPlan }
-  | { action: "FORCED_SLOT"; studentId: number; slotId: number }
   | { action: "SEEN"; studentId: number; start: string }
-  | { action: "APPLY"; studentId: number; slotId: number; month: string }
-  | { action: "UNAPPLY"; studentId: number; slotId: number; month: string }
+  | { action: "APPLY"; studentId: number; month: string; picks: { day: number; slotId: number }[] }
   | { action: "LATE_DATE"; id: number; date: string; slotId: number }
   | { action: "LATE_DONE"; id: number; done: boolean }
   | { action: "FORM_URL"; url: string | null }
-  | { action: "FORM_APPLY"; month: string; rows: { studentId: number; slotId: number }[] };
+  | { action: "FORM_APPLY"; month: string; rows: { studentId: number; picks: { day: number; slotId: number }[] }[] };
 
 export const POST = withUser(async ({ user, req }) => {
   const b = await readJson<Body>(req);
@@ -48,17 +44,11 @@ export const POST = withUser(async ({ user, req }) => {
     case "PLAN":
       savePlan(user, b.studentId, b.plan ?? {});
       return null;
-    case "FORCED_SLOT":
-      setForcedSlot(user, b.studentId, b.slotId);
-      return null;
     case "SEEN":
       markSeen(b.studentId, b.start);
       return null;
     case "APPLY":
-      addApply(user, b.studentId, b.slotId, b.month);
-      return null;
-    case "UNAPPLY":
-      removeApply(user, b.studentId, b.slotId, b.month);
+      saveApply(user, b.studentId, b.month, b.picks ?? []);
       return null;
     case "LATE_DATE":
       setLateDate(user, b.id, b.date, b.slotId);

@@ -2,7 +2,7 @@
 
 import { bookShort } from "@/lib/books";
 import { DAY_LABELS, rangeLabel } from "@/lib/time";
-import type { Book, ClassModel, ClassPart, TempSwap } from "@/lib/types";
+import { teacherLabel, type Book, type ClassModel, type ClassPart, type TempSwap } from "@/lib/types";
 
 /** 학년 순서 — 피팅반(무학년제)은 그 학교급 맨 앞, 고등 누적오답은 고3 뒤 */
 export const GRADE_ORDER = [
@@ -103,3 +103,9 @@ export function lanes<T extends { start: number; end: number }>(items: T[]): (T 
 
 /** 강의실 경고 key — 요일|강의실|시작|반이름 (다음 주에도 유지) */
 export const alertKey = (day: number, roomName: string, start: number, className: string) => `${day}::${roomName}::${start}::${className}`;
+
+/** 담당 표시 — 숙제반은 담당 선생님 없이 데스크가 출결을 맡는다 */
+export const ownerLabel = (c: ClassModel) => (c.type === "HOMEWORK" ? "데스크" : teacherLabel(mainTeacher(c).name));
+
+/** 시간표에 보일 반 — 학생이 0명인 반(예: 학생 없는 요일의 누적오답)은 숨긴다. 반 관리에서는 모두 보인다 */
+export const withStudents = (classes: ClassModel[]) => classes.filter((c) => c.students.length > 0);

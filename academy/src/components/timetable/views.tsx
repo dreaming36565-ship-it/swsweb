@@ -10,7 +10,7 @@ import { classColorMap, teacherColor, type ClassColor } from "@/lib/colors";
 import { DAY_LABELS, fmtTime, overlaps, rangeLabel } from "@/lib/time";
 import { teacherLabel, type Book, type ClassModel, type ClassPart } from "@/lib/types";
 import TimeGrid, { dayRange, type GridBlock, type GridColumn } from "./TimeGrid";
-import { GRADE_ORDER, alertKey, course, dayLabel, isSwapped, levelOf, mainTeacher, partBooks, partsOn, timeSpan } from "./model";
+import { GRADE_ORDER, alertKey, course, dayLabel, isSwapped, levelOf, mainTeacher, ownerLabel, partBooks, partsOn, timeSpan, withStudents } from "./model";
 import type { Ctx } from "./TimetableClient";
 
 /* ------------------------------------------------------------ 공통 */
@@ -21,12 +21,14 @@ function dayColors(classes: ClassModel[], day: number) {
 
 function classBlock(c: ClassModel, p: ClassPart, color: ClassColor | undefined, onClick: () => void, extra?: ReactNode): GridBlock {
   const small = p.end - p.start <= 30;
+  const hapban = p.kind === "CLASS" && c.hapbanWith !== null;
   return {
     key: `${c.id}-${p.kind}-${p.start}`,
     start: p.start,
     end: p.end,
     color: color ?? null,
     kind: p.kind === "SR" ? "sr" : "class",
+    hapban,
     title: `${c.name} ${p.label} ${rangeLabel(p.start, p.end)}`,
     onClick,
     content: (
@@ -35,6 +37,7 @@ function classBlock(c: ClassModel, p: ClassPart, color: ClassColor | undefined, 
           {c.name}({c.students.length}명)
         </b>{" "}
         · {p.label}
+        {hapban ? <span className="ml-1 rounded bg-navy-700 px-1 text-[10px] font-extrabold text-white">🔗 합반</span> : null}
         <br />
         {rangeLabel(p.start, p.end)}
         {small ? null : (
@@ -71,7 +74,8 @@ function ConflictBar({ ctx, day }: { ctx: Ctx; day: number }) {
 /* ------------------------------------------------------------ ① 선생님별 */
 
 export function TeacherView({ ctx, day }: { ctx: Ctx; day: number }) {
-  const { classes, teachers, tempSwaps } = ctx.data;
+  const { teachers, tempSwaps } = ctx.data;
+  const classes = withStudents(ctx.data.classes);
   const colors = dayColors(classes, day);
   const on = classes.flatMap((c) => partsOn(c, day, isSwapped(tempSwaps, c.id, day)).map((p) => ({ c, p })));
   const busy = (id: number) => on.some(({ p }) => p.kind === "CLASS" && p.teacherId === id);
@@ -103,7 +107,8 @@ export function TeacherView({ ctx, day }: { ctx: Ctx; day: number }) {
 
 export function RoomView({ ctx, day }: { ctx: Ctx; day: number }) {
   const confirm = useConfirm();
-  const { classes, rooms, bookings, tempSwaps, alertOk, week, today } = ctx.data;
+  const { rooms, bookings, tempSwaps, alertOk, week, today } = ctx.data;
+  const classes = withStudents(ctx.data.classes);
   const date = week.find((w) => w.day === day)?.date ?? today;
   const past = date < today;
   const colors = dayColors(classes, day);
@@ -359,7 +364,9 @@ function MemoModal({ ctx, date, memo, onClose }: { ctx: Ctx; date: string; memo:
 
 export function AllView({ ctx }: { ctx: Ctx }) {
   const confirm = useConfirm();
-  const { classes, teachers, books } = ctx.data;
+  const { teachers, books } = ctx.data;
+  const classes = withStudents(ctx.data.classes);
+  const hidden = ctx.data.classes.length - classes.length;
   const groups = [...GRADE_ORDER, ...[...new Set(classes.map((c) => c.grade || "개별"))].filter((g) => !GRADE_ORDER.includes(g))]
     .map((g) => [g, classes.filter((c) => (c.grade || "개별") === g)] as const)
     .filter(([, l]) => l.length);
@@ -385,7 +392,10 @@ export function AllView({ ctx }: { ctx: Ctx }) {
             </span>
           ))}
         </span>
-        <span className="text-xs text-muted">테두리 색 = 담당 선생님 · 순서: 초등피팅 · 초1~6 · 중등피팅 · 중1~3 · 고등피팅 · 고1~3 · 누적오답 · 숙제반 · 개별</span>
+        <span className="text-xs text-muted">
+          테두리 색 = 담당 선생님 · 순서: 초등피팅 · 초1~6 · 중등피팅 · 중1~3 · 고등피팅 · 고1~3 · 누적오답 · 숙제반 · 개별
+          {hidden ? ` · 0명 반 ${hidden}개 숨김(반 관리에서 보여요)` : ""}
+        </span>
       </div>
       {groups.map(([g, list]) => (
         <section key={g}>
@@ -406,7 +416,14 @@ export function AllView({ ctx }: { ctx: Ctx }) {
                   className="card relative cursor-pointer px-4 py-3.5 hover:shadow-md"
                   style={{ borderColor: col, borderWidth: 2, borderLeftWidth: 7 }}
                 >
-                  <div className="mb-1.5 text-[22px] font-extrabold">{c.name}</div>
+                  <div className="mb-1.5 text-[22px] font-extrabold">
+                    {c.name}
+                    {c.hapbanWith ? (
+                      <span className="ml-2 rounded-md bg-navy-700 px-2 py-0.5 align-middle text-xs font-extrabold text-white">
+                        🔗 {classes.find((x) => x.id === c.hapbanWith)?.name ?? "합반"}
+                      </span>
+                    ) : null}
+                  </div>
                   <div className="text-[15px] leading-7">
                     {dayLabel(c.days)} {timeSpan(c)}
                   </div>
@@ -418,7 +435,7 @@ export function AllView({ ctx }: { ctx: Ctx }) {
                   </div>
                   <div className="text-[15px] leading-7">
                     <span className="mr-1 text-muted">담당</span>{" "}
-                    <b style={{ color: col }}>{teacherLabel(t.name)}</b>
+                    <b style={{ color: col }}>{ownerLabel(c)}</b>
                   </div>
                   {can(ctx.user, "timetable.write") ? (
                     <button
@@ -521,14 +538,28 @@ export function SearchView({ ctx }: { ctx: Ctx }) {
           for (const p of partsOn(c, ctx.now.day, isSwapped(tempSwaps, c.id, ctx.now.day)))
             if (p.start <= ctx.now.min && ctx.now.min < p.end) live = { c, p };
         const seat = live ? ctx.data.seats.find((s) => s.classId === live!.c.id && s.studentId === st.id)?.seat : null;
+        // 오늘 결석 — 지금 수업 반의 결석이 먼저, 없으면 오늘 다른 반 결석
+        const absents = ctx.data.absents.filter((a) => a.studentId === st.id);
+        const absentNow = live ? absents.find((a) => a.classId === null || a.classId === live!.c.id) : undefined;
+        const absent = absentNow ?? absents[0];
+        const absentTag = (a: { classId: number | null; reason: string }) => (
+          <span className="ml-2 inline-block rounded-full bg-alert px-2.5 py-0.5 align-middle text-xs font-bold text-white">
+            결석{a.classId && mine.length > 1 ? ` ${classes.find((c) => c.id === a.classId)?.name ?? ""}` : ""}
+            {a.reason ? ` · ${a.reason}` : ""}
+          </span>
+        );
         return (
           <div key={st.id} className="card p-4">
             <h3 className="text-lg font-bold">
               {st.name} <span className="text-sm font-semibold text-muted">{mine.map((c) => c.name).join(" · ")}</span>
+              {absent ? absentTag(absent) : null}
             </h3>
             {live ? (
-              <div className="my-2.5 rounded-xl border border-ok-soft bg-ok-soft px-3.5 py-3 font-bold text-ok">
-                🟢 지금 {live.c.name} {live.p.label} 중 —{" "}
+              <div
+                className={`my-2.5 rounded-xl border px-3.5 py-3 font-bold ${absentNow ? "border-alert bg-alert-soft text-ink" : "border-ok-soft bg-ok-soft text-ok"}`}
+              >
+                {absentNow ? <span className="mr-1.5 rounded bg-alert px-1.5 py-0.5 text-xs text-white">결석</span> : "🟢 "}
+                지금 {live.c.name} {live.p.label} 중 —{" "}
                 {live.p.kind === "SR" ? (
                   <>
                     SR룸 <b>{seat ?? "자리 없음"}</b> 자리
@@ -680,7 +711,7 @@ export function ManageView({ ctx }: { ctx: Ctx }) {
                   ))}
                 </td>
                 <td className="px-3 py-2">{c.students.length}</td>
-                <td className="px-3 py-2">{teacherLabel(mainTeacher(c).name)}</td>
+                <td className="px-3 py-2">{ownerLabel(c)}</td>
                 <td className="whitespace-nowrap px-3 py-2 text-right">
                   <button type="button" className="btn px-2 py-0.5 text-xs" onClick={() => ctx.editClass(c.id)}>
                     편집

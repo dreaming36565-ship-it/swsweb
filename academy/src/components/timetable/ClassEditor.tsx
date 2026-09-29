@@ -8,8 +8,8 @@ import Modal from "../Modal";
 import TimeSelect from "../TimeSelect";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
 import { bookFull, bookShort } from "@/lib/books";
-import { DAY_LABELS } from "@/lib/time";
-import type { Book, ClassPart } from "@/lib/types";
+import { DAY_LABELS, rangeLabel } from "@/lib/time";
+import { teacherLabel, type Book, type ClassPart } from "@/lib/types";
 import { GRADE_ORDER, WEEK, weekOrder } from "./model";
 import type { Ctx } from "./TimetableClient";
 
@@ -24,6 +24,8 @@ type Draft = {
   days: number[];
   parts: Part[];
   students: string[];
+  /** 🔗 합반 상대 반 */
+  hapbanWith: number | null;
 };
 
 const sortDays = (d: number[]) => [...new Set(d)].sort((a, b) => weekOrder(a) - weekOrder(b));
@@ -46,6 +48,7 @@ export default function ClassEditor({ ctx, classId, onClose }: { ctx: Ctx; class
         days: c.days,
         parts: c.parts.map((p) => ({ ...p })),
         students: c.students.map((s) => s.name),
+        hapbanWith: c.hapbanWith,
       };
     return {
       name: "",
@@ -59,6 +62,7 @@ export default function ClassEditor({ ctx, classId, onClose }: { ctx: Ctx; class
         { kind: "CLASS", label: "수업", start: 14 * 60 + 40, end: 16 * 60 + 20, roomId: firstRoom?.id ?? null, teacherId: teachers[0]?.id ?? null, days: [1, 3], bookIds: [] },
       ],
       students: [],
+      hapbanWith: null,
     };
   });
   const [error, setError] = useState<string | null>(null);
@@ -100,6 +104,7 @@ export default function ClassEditor({ ctx, classId, onClose }: { ctx: Ctx; class
         days: d.days,
         parts: d.parts.map((p) => ({ ...p, teacherId: p.kind === "SR" ? null : p.teacherId })),
         students: d.students,
+        hapbanWith: d.hapbanWith,
       });
       await ctx.reload();
       onClose();
@@ -109,6 +114,31 @@ export default function ClassEditor({ ctx, classId, onClose }: { ctx: Ctx; class
       setBusy(false);
     }
   };
+
+  // 🔗 합반 후보 — 같은 요일 · 같은 강의실 · 같은 선생님으로 수업 시간이 겹치는 반
+  const hapbanOptions = ctx.data.classes
+    .filter((o) => o.id !== classId)
+    .map((o) => {
+      const hit = o.parts.find(
+        (op) =>
+          op.kind === "CLASS" &&
+          d.parts.some(
+            (p) =>
+              p.kind === "CLASS" &&
+              p.roomId === op.roomId &&
+              p.teacherId !== null &&
+              p.teacherId === op.teacherId &&
+              p.start < op.end &&
+              op.start < p.end &&
+              p.days.some((x) => op.days.includes(x)),
+          ),
+      );
+      return hit ? { c: o, p: hit } : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => !!x);
+  const hapbanCur = ctx.data.classes.find((o) => o.id === d.hapbanWith);
+  const hapbanLabel = (o: (typeof hapbanOptions)[number]) =>
+    `${o.c.name} — ${o.p.days.map((x) => DAY_LABELS[x]).join("·")} ${rangeLabel(o.p.start, o.p.end)} · ${o.p.roomName ?? ""} · ${teacherLabel(o.p.teacherName)}`;
 
   const derived = [...new Set(d.parts.flatMap((p) => p.bookIds))]
     .map((id) => books.find((b) => b.id === id))
@@ -305,6 +335,35 @@ export default function ClassEditor({ ctx, classId, onClose }: { ctx: Ctx; class
           ＋ 칸 추가
         </button>
         <p className="mt-1 text-xs text-muted">한 요일에는 수업 칸 1개 + SR 칸 1개까지 넣을 수 있어요. 수업 없이 SR만 쓰는 반(누적오답 · 숙제반)은 SR 칸만 두면 돼요.</p>
+      </div>
+
+      <div className="mt-3 rounded-xl border border-line bg-navy-50 p-3">
+        <label className="label">🔗 합반 (같은 교실에서 같이 수업하는 반)</label>
+        <select
+          className="field"
+          value={d.hapbanWith ?? ""}
+          onChange={(e) => setD({ ...d, hapbanWith: e.target.value ? Number(e.target.value) : null })}
+        >
+          <option value="">없음</option>
+          {hapbanOptions.map((o) => (
+            <option key={o.c.id} value={o.c.id}>
+              {hapbanLabel(o)}
+            </option>
+          ))}
+          {hapbanCur && !hapbanOptions.some((o) => o.c.id === hapbanCur.id) ? (
+            <option value={hapbanCur.id}>{hapbanCur.name} — 지금은 겹치는 수업이 없어요</option>
+          ) : null}
+        </select>
+        <p className="mt-1 text-xs text-muted">
+          같은 요일 · 같은 강의실 · 같은 선생님으로 수업이 겹치는 반만 나와요. 합반끼리는 겹침 경고가 없고, 출석체크는 반마다 자기 시작 시각, SR은 같은 열에 이어서 앉아요.
+        </p>
+        {hapbanOptions.length && !d.hapbanWith ? (
+          <p className="mt-1.5 text-sm font-bold text-alert">
+            ⚠ 겹침 — {hapbanOptions.map((o) => o.c.name).join(", ")}과(와) 같은 강의실 · 선생님 시간이 겹쳐요. 같이 수업하는 반이면 🔗 합반을 골라 주세요.
+          </p>
+        ) : d.hapbanWith && hapbanOptions.some((o) => o.c.id === d.hapbanWith) ? (
+          <p className="mt-1.5 text-sm font-bold text-ok">✔ {hapbanCur?.name}과(와) 합반 — 겹침 경고 없음</p>
+        ) : null}
       </div>
 
       <div className="mt-3">

@@ -22,11 +22,15 @@ export default function CallPopup({
   group,
   muted,
   onToggleMute,
+  folded,
+  onToggleFold,
   onDone,
 }: {
   group: AttendanceGroup;
   muted: boolean;
   onToggleMute: () => void;
+  folded: boolean;
+  onToggleFold: () => void;
   onDone: () => void;
 }) {
   const rows: Row[] = useMemo(
@@ -126,6 +130,9 @@ export default function CallPopup({
       }
       muted={muted}
       onToggleMute={onToggleMute}
+      folded={folded}
+      onToggleFold={onToggleFold}
+      foldLabel={`${fmtTime(group.triggerMin)} · 남은 인원 ${remaining}명`}
       error={error}
       note="체크되지 않은 친구들 전화 돌려주시고, 지각사유와 도착예정시간 남겨주세요."
       footer={

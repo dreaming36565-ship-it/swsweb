@@ -121,39 +121,93 @@ export function certIssues(cert: Map<string, "OK" | "MISS">, cycle: Cycle, ym: s
   return out.sort((a, b) => a.d.localeCompare(b.d));
 }
 
+/**
+ * 📷 확인 안 한 인증 날 — 인증 요일인데 지난 날(수업 당일 자정까지라 다음 날부터)인데 인증됨/미인증 기록이 없음.
+ * 담당T에게 알림을 보낼 때 · 숙제반 현황 할 일에 쓴다.
+ */
+export function certUnchecked(plan: HwPlan, cycle: Cycle, cert: Map<string, "OK" | "MISS">, today: string): string[] {
+  const last = cycle.gradAt && cycle.gradAt < today ? cycle.gradAt : addDays(today, -1);
+  if (last <= cycle.start) return [];
+  return datesBetween(addDays(cycle.start, 1), last).filter((d) => plan[dowOf(d)]?.how === "CERT" && !cert.has(d));
+}
+
 /* ---------------------------------------------------------------- 숙제반 칸 */
 
-/** 숙제반 칸 = 반 관리의 숙제반 (요일 · 시간) */
+/**
+ * 숙제반 칸 = 반 관리의 숙제반 (요일 · 시간).
+ * 2026-09-30 확정: 월~목 1부 「초등숙제반 시간」 오후 4~6시 / 2부 「중등숙제반 시간」 오후 8~10시.
+ * 학생은 요일마다 1부 · 2부 중 하나를 고른다 (예: 월 2부 · 목 1부) — 신청 · 강제 모두 요일 단위.
+ */
 export type HwSlot = { id: number; name: string; days: number[]; start: number; end: number };
 
-export type Busy = (day: number) => [number, number][];
-export const slotClashes = (slot: HwSlot, busy: Busy) =>
-  slot.days.some((d) => busy(d).some(([a, b]) => overlaps(a, b, slot.start, slot.end)));
+/** 1부 · 2부 — 시작이 이른 칸이 1부 */
+export const partNo = (slots: HwSlot[], slot: HwSlot) => [...slots].sort((a, b) => a.start - b.start).findIndex((s) => s.id === slot.id) + 1;
 
-/** 강제 숙제반 칸: 이미 다니는 숙제반(신청) → 다니는 반 요일 중 안 겹치는 칸 → 아무 안 겹치는 칸 */
-export function defaultForcedSlot(
-  slots: HwSlot[],
-  opts: { applyingSlotId: number | null; regularDays: number[]; busy: Busy },
-): HwSlot | null {
-  if (opts.applyingSlotId) {
-    const s = slots.find((x) => x.id === opts.applyingSlotId);
-    if (s) return s;
-  }
-  const want = [...opts.regularDays].sort().join(",");
-  return (
-    slots.find((s) => [...s.days].sort().join(",") === want && !slotClashes(s, opts.busy)) ??
-    slots.find((s) => !slotClashes(s, opts.busy)) ??
-    null
-  );
-}
+export type Busy = (day: number) => [number, number][];
+/** 그 요일에 숙제반 시간이 수업 · SR과 겹치나 */
+export const clashOn = (slot: HwSlot, day: number, busy: Busy) => busy(day).some(([a, b]) => overlaps(a, b, slot.start, slot.end));
 
 /** 요일별 방법 — ATTEND 🏫 숙제반 참석 / CERT 📷 사진 인증 */
 export type PlanDay = { how: "ATTEND"; slotId: number } | { how: "CERT" };
 export type HwPlan = Partial<Record<number, PlanDay>>;
 
-/** 기본: 강제 숙제반 칸의 요일은 모두 참석 */
-export function defaultPlan(slot: HwSlot | null): HwPlan {
+/**
+ * 강제 숙제반 기본 방법 — 정규반 요일마다 숙제반 참석.
+ * 칸: 그 요일에 신청해 다니는 칸 → 학교급 칸(초등 → 초등숙제반 시간, 중등 → 중등숙제반 시간) → 안 겹치는 아무 칸
+ */
+export function defaultPlan(
+  slots: HwSlot[],
+  opts: { applying: { day: number; slotId: number }[]; regularDays: number[]; busy: Busy; level: "초등" | "중등" | null },
+): HwPlan {
   const p: HwPlan = {};
-  if (slot) for (const d of slot.days) p[d] = { how: "ATTEND", slotId: slot.id };
+  for (const d of opts.regularDays) {
+    const open = slots.filter((s) => s.days.includes(d) && !clashOn(s, d, opts.busy));
+    const pick =
+      open.find((s) => opts.applying.some((a) => a.day === d && a.slotId === s.id)) ??
+      (opts.level ? open.find((s) => s.name.includes(opts.level!)) : undefined) ??
+      open[0];
+    if (pick) p[d] = { how: "ATTEND", slotId: pick.id };
+  }
   return p;
+}
+
+/** 신청 요일 표시 — 「월 2부 · 목 1부」 */
+export function applyLabel(slots: HwSlot[], list: { day: number; slotId: number }[]): string {
+  return [...list]
+    .sort((a, b) => a.day - b.day)
+    .map((a) => {
+      const s = slots.find((x) => x.id === a.slotId);
+      return `${"일월화수목금토"[a.day]} ${s ? `${partNo(slots, s)}부` : "?"}`;
+    })
+    .join(" · ");
+}
+
+/**
+ * 설문 응답의 요일 글 → 요일별 칸. 「월 8-10시, 목 4-6시」 · 「월수 8시」 · 「화 1부」
+ * 요일 글자 묶음마다 뒤따르는 시각(또는 1부·2부)으로 칸을 정한다. 시각이 없으면 그 요일 칸이 하나일 때만.
+ */
+export function parseApplyText(text: string, slots: HwSlot[]): { day: number; slotId: number }[] | null {
+  const out: { day: number; slotId: number }[] = [];
+  const re = /([월화수목금토](?:\s*[,·/]?\s*[월화수목금토])*)\s*(?:요일)?\s*([^월화수목금토]*)/g;
+  const sorted = [...slots].sort((a, b) => a.start - b.start);
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const days = [...m[1].matchAll(/[월화수목금토]/g)].map((x) => "일월화수목금토".indexOf(x[0]));
+    const rest = m[2];
+    const part = /([12])\s*부/.exec(rest)?.[1];
+    const hour = /(\d{1,2})\s*(?:시|:|-|~)/.exec(rest)?.[1];
+    for (const d of days) {
+      const on = sorted.filter((s) => s.days.includes(d));
+      const s = part
+        ? on.find((x) => partNo(slots, x) === Number(part))
+        : hour
+          ? on.find((x) => Number(hour) % 12 === Math.floor(x.start / 60) % 12)
+          : on.length === 1
+            ? on[0]
+            : undefined;
+      if (!s) return null;
+      out.push({ day: d, slotId: s.id });
+    }
+  }
+  return out.length ? out : null;
 }

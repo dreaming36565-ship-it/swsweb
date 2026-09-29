@@ -33,7 +33,7 @@ export function listClasses(dept: DeptFilter = "ALL"): ClassRow[] {
     getDb()
       .prepare(
         `SELECT c.id, c.name, c.department, c.teacher_id AS teacherId, u.name AS teacherName,
-                c.room_id AS roomId, r.name AS roomName, c.grade, c.textbook, c.level,
+                c.room_id AS roomId, r.name AS roomName, c.grade, c.textbook, c.level, c.hapban_with AS hapbanWith,
                 (SELECT COUNT(*) FROM student_classes sc JOIN students s ON s.id = sc.student_id
                   WHERE sc.class_id = c.id AND s.active = 1) AS studentCount
            FROM classes c
@@ -236,7 +236,9 @@ export function conflictsForDay(day: number, date?: string): Conflict[] {
     teacherId: isSrOnly(s, srRoomIds) ? null : s.teacherId,
     studentIds: byClass.get(s.classId) ?? [],
   }));
-  return detectConflicts(input, srRoomIds);
+  // 🔗 합반끼리는 같은 교실 · 같은 선생님이어도 겹침이 아니다
+  const hapban = new Map(listClasses("ALL").map((c) => [c.id, c.hapbanWith]));
+  return detectConflicts(input, srRoomIds, (a, b) => hapban.get(a) === b);
 }
 
 const isSrOnly = (s: TimetableSession, srRooms: Set<number>) =>
@@ -290,7 +292,7 @@ export function listClassModels(): ClassModel[] {
       add(
         {
           kind: "CLASS",
-          label: s.label || (s.type === "INDIVIDUAL" ? "개별" : "수업"),
+          label: s.label || "수업",
           start: s.startMin,
           end: s.endMin,
           roomId: s.roomId,
@@ -327,6 +329,7 @@ export function listClassModels(): ClassModel[] {
       days: [...new Set(ss.map((s) => s.dayOfWeek))].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)),
       parts,
       srOnly,
+      hapbanWith: c.hapbanWith,
     });
   }
   return out;
@@ -342,6 +345,8 @@ export type ClassInput = {
   days: number[];
   parts: { kind: "CLASS" | "SR"; label: string; start: number; end: number; roomId: number | null; teacherId: number | null; days: number[]; bookIds: number[] }[];
   students: string[];
+  /** 🔗 합반 상대 반 (없으면 null) */
+  hapbanWith?: number | null;
 };
 
 const typeForGrade = (grade: string): SessionType =>
@@ -464,9 +469,41 @@ export function saveClass(input: ClassInput): number {
     }
     for (const e of existing) if (!used.has(e.id)) del.run(e.id);
     syncRosterNoRefresh(classId, input.students, department);
+    if (input.hapbanWith !== undefined) setHapban(classId, input.hapbanWith ?? null);
     refreshSr();
     return classId;
   });
+}
+
+/**
+ * 🔗 합반 — 양쪽 반에 서로 적는다 (예전 짝은 풀린다).
+ * 같은 요일에 같은 강의실 · 같은 선생님으로 수업 시간이 겹치는 반만 묶을 수 있다.
+ * 짝이 바뀌면 두 반의 SR 자리(사람이 옮긴 자리 빼고)를 다시 잡는다 — 같은 열에 이어서 앉히려고.
+ */
+function setHapban(classId: number, partner: number | null): void {
+  const db = getDb();
+  const cur = row<{ hapban_with: number | null }>(db.prepare("SELECT hapban_with FROM classes WHERE id = ?").get(classId))?.hapban_with ?? null;
+  if (cur === partner) return;
+  if (partner !== null) {
+    assert(partner !== classId, "자기 반과는 합반할 수 없어요.");
+    const p = row<{ name: string }>(db.prepare("SELECT name FROM classes WHERE id = ?").get(partner));
+    assert(p, "합반할 반을 찾을 수 없습니다.");
+    const mine = listAllSessions().filter((s) => s.classId === classId);
+    const theirs = listAllSessions().filter((s) => s.classId === partner);
+    const ok = mine.some((a) =>
+      theirs.some((b) => a.dayOfWeek === b.dayOfWeek && a.roomId === b.roomId && a.teacherId === b.teacherId && a.startMin < b.endMin && b.startMin < a.endMin),
+    );
+    assert(ok, `${p.name}과(와) 같은 요일 · 같은 강의실 · 같은 선생님으로 겹치는 수업이 없어 합반할 수 없어요.`);
+  }
+  const touched = [classId, cur, partner].filter((x): x is number => x !== null);
+  // 얽혀 있던 짝을 모두 풀고 새로 묶는다
+  const place = touched.map(() => "?").join(",");
+  db.prepare(`UPDATE classes SET hapban_with = NULL WHERE id IN (${place}) OR hapban_with IN (${place})`).run(...touched, ...touched);
+  if (partner !== null) {
+    db.prepare("UPDATE classes SET hapban_with = ? WHERE id = ?").run(partner, classId);
+    db.prepare("UPDATE classes SET hapban_with = ? WHERE id = ?").run(classId, partner);
+  }
+  db.prepare(`DELETE FROM sr_seats WHERE manual = 0 AND class_id IN (${place})`).run(...touched);
 }
 
 function syncRosterNoRefresh(classId: number, names: string[], department: string): void {

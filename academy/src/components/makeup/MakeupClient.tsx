@@ -11,7 +11,7 @@ import ReasonChips from "../attendance/ReasonChips";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
 import { can } from "@/lib/perm";
 import { NOTICE_LABEL, STATUS_ORDER, catOfReason, flagsOf, isOpen, statusOf, usesDreamPlus, verdictOf, type MakeupStatus } from "@/lib/makeup";
-import { dateKey, fmtTime, monthDay, monthDayWeek, parseDateKey } from "@/lib/time";
+import { addDaysKey, dateKey, fmtTime, monthDay, monthDayWeek, parseDateKey } from "@/lib/time";
 import { teacherLabel, type Absence, type AbsenceCat, type AbsenceNotice, type AbsenceRound, type SessionUser } from "@/lib/types";
 
 type Payload = { today: string; absences: Absence[]; students: { id: number; name: string; classNames: string[] }[] };
@@ -40,6 +40,7 @@ export default function MakeupClient({ user }: { user: SessionUser }) {
   const [month, setMonth] = useState(() => dateKey(new Date()).slice(0, 7));
   const [status, setStatus] = useState<MakeupStatus | "">("");
   const [openId, setOpenId] = useState<number | null>(null);
+  const [planId, setPlanId] = useState<number | null>(null);
   const [studentName, setStudentName] = useState<string | null>(null);
   const [pre, setPre] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,7 +87,10 @@ export default function MakeupClient({ user }: { user: SessionUser }) {
   const futN = list.filter((a) => a.date > today).length;
   const opened = all.find((a) => a.id === openId) ?? null;
 
-  const table = (rows: Absence[], empty: string, group = false) => <AbsenceTable rows={rows} empty={empty} group={group} today={today} onOpen={setOpenId} onStudent={setStudentName} />;
+  const table = (rows: Absence[], empty: string, group = false) => (
+    <AbsenceTable rows={rows} empty={empty} group={group} today={today} onOpen={setOpenId} onStudent={setStudentName} canPlanRow={(a) => canPlan(user, a)} onPlan={(a) => setPlanId(a.id)} />
+  );
+  const planning = all.find((a) => a.id === planId) ?? null;
 
   return (
     <div className="w-full space-y-3">
@@ -176,6 +180,34 @@ export default function MakeupClient({ user }: { user: SessionUser }) {
           })()}
         </Modal>
       ) : null}
+      {planning ? (
+        <Modal
+          open
+          width={760}
+          title={
+            <>
+              🗓 보강 일정 넣기 — {planning.studentName} <span className="text-[15px] font-semibold text-muted">{planning.className}</span>
+            </>
+          }
+          subtitle={`결석 ${monthDayWeek(planning.date)} · ${planning.reason || "사유 없음"}`}
+          onClose={() => setPlanId(null)}
+          footer={
+            <button type="button" className="btn" onClick={() => setPlanId(null)}>
+              닫기
+            </button>
+          }
+        >
+          {planning.rounds.length ? (
+            <div className="mb-2 text-[13px]">
+              <span className="mr-1 text-muted">이미 넣은 보강</span>
+              {planning.rounds.map((r) => (
+                <RoundChip key={r.id} r={r} today={today} />
+              ))}
+            </div>
+          ) : null}
+          <MakeupPicker a={planning} today={today} act={act} onDone={() => setPlanId(null)} />
+        </Modal>
+      ) : null}
       {pre && data ? <PreRegister students={data.students} act={act} onClose={() => setPre(false)} onDone={() => { setPre(false); setView("future"); }} /> : null}
       {toast ? <div className="fixed bottom-6 left-1/2 z-[90] -translate-x-1/2 rounded-xl bg-navy-900 px-5 py-2.5 text-sm font-semibold text-white">{toast}</div> : null}
     </div>
@@ -201,6 +233,84 @@ function RoundChip({ r, today }: { r: AbsenceRound; today: string }) {
     <span className={`${base} ${cls}`}>
       {icon} {r.date ? monthDayWeek(r.date) : ""} {r.startMin !== null ? fmtTime(r.startMin) : ""}
     </span>
+  );
+}
+
+/** 보강 일정을 넣을 수 있는가 — 그 반 담당T만, 이월·이월 대기·무단(유료 아님)은 안 된다 */
+const canPlan = (user: SessionUser, a: Absence) =>
+  user.roles.includes("TEACHER") && a.teacherId === user.id && !a.carried && !a.carryReq && !(verdictOf(a) === "무단" && !a.paid);
+
+/** 보강 시간 빠른 선택 — 오후 2:00 ~ 9:30, 30분마다 (그 밖은 아래 시간 선택으로) */
+const QUICK_TIMES = Array.from({ length: 16 }, (_, i) => 14 * 60 + i * 30);
+
+/**
+ * 🗓 보강 일정 넣기 — 날짜 버튼(오늘부터 2주, 일요일 빼고) 또는 달력, 시간 버튼 또는 시간 선택.
+ * 고른 것을 한 줄로 보여 주고 「보강 넣기」 한 번. 「과제로 대체」도 여기서.
+ */
+function MakeupPicker({ a, today, act, onDone }: { a: Absence; today: string; act: Act; onDone?: () => void }) {
+  const days = useMemo(() => {
+    const out: string[] = [];
+    for (let i = 0; out.length < 12; i++) {
+      const d = addDaysKey(today, i);
+      if (parseDateKey(d).getDay() !== 0) out.push(d);
+    }
+    return out;
+  }, [today]);
+  const [date, setDate] = useState<string | null>(null);
+  const [min, setMin] = useState<number | null>(null);
+  const chip = (on: boolean) => `btn px-2 py-1 text-xs ${on ? "btn-primary" : ""}`;
+  const add = async () => {
+    if (await act({ action: "ADD_ROUND", id: a.id, type: "MAKEUP", date, startMin: min }, `🗓 보강 ${date ? monthDayWeek(date) : ""} ${min !== null ? fmtTime(min) : ""}`)) {
+      setDate(null);
+      setMin(null);
+      onDone?.();
+    }
+  };
+  return (
+    <div className="space-y-2.5 rounded-lg bg-navy-50 p-3">
+      <div>
+        <span className="label">① 날짜</span>
+        <div className="flex flex-wrap items-center gap-1">
+          {days.map((d) => (
+            <button key={d} type="button" className={chip(date === d)} onClick={() => setDate(d)}>
+              {d === today ? "오늘 " : ""}
+              {monthDayWeek(d)}
+            </button>
+          ))}
+          <input
+            type="date"
+            className={`field w-40 py-1 text-xs ${date && !days.includes(date) ? "border-navy-900 font-bold" : ""}`}
+            title="다른 날짜"
+            value={date && !days.includes(date) ? date : ""}
+            onChange={(e) => setDate(e.target.value || null)}
+          />
+        </div>
+      </div>
+      <div>
+        <span className="label">② 시간</span>
+        <div className="flex flex-wrap items-center gap-1">
+          <span className="mr-0.5 text-xs font-bold text-muted">오후</span>
+          {QUICK_TIMES.map((m) => (
+            <button key={m} type="button" className={chip(min === m)} onClick={() => setMin(m)}>
+              {fmtTime(m).replace("오후 ", "")}
+            </button>
+          ))}
+          <TimeSelect className="w-44" value={min !== null && !QUICK_TIMES.includes(min) ? min : null} allowEmpty emptyLabel="다른 시간" onChange={(v) => v !== null && setMin(v)} />
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 border-t border-line pt-2.5">
+        <b className="text-sm">
+          {date ? monthDayWeek(date) : <span className="text-muted">날짜</span>} {min !== null ? fmtTime(min) : <span className="text-muted">시간</span>}
+        </b>
+        <button type="button" className="btn btn-primary px-3 py-1 text-xs" disabled={!date || min === null} onClick={() => void add()}>
+          + 보강 넣기
+        </button>
+        <span className="text-xs text-muted">또는</span>
+        <button type="button" className="btn px-2.5 py-1 text-xs" onClick={() => void act({ action: "ADD_ROUND", id: a.id, type: "TASK" }, "📄 과제로 대체").then((ok) => ok && onDone?.())}>
+          📄 과제로 대체
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -231,7 +341,12 @@ function AbsenceTable({
   today,
   onOpen,
   onStudent,
+  canPlanRow,
+  onPlan,
 }: {
+  /** 표에서 바로 보강 일정 넣기 (담당T) */
+  canPlanRow?: (a: Absence) => boolean;
+  onPlan?: (a: Absence) => void;
   rows: Absence[];
   empty: string;
   group?: boolean;
@@ -283,6 +398,18 @@ function AbsenceTable({
         <td className="px-3 py-2">
           {a.carried ? <span className="text-muted">이월 — {a.carried.reason}</span> : a.rounds.length ? a.rounds.map((r) => <RoundChip key={r.id} r={r} today={today} />) : <span className="text-muted">—</span>}
           {a.more ? <span className="rounded-md border border-line px-1.5 text-xs">+ 남은 보강 있음</span> : null}
+          {onPlan && canPlanRow?.(a) && statusOf(a) !== "보강 완료" ? (
+            <button
+              type="button"
+              className="btn btn-primary ml-1 px-2 py-0 text-xs"
+              onClick={(e) => {
+                e.stopPropagation();
+                onPlan(a);
+              }}
+            >
+              + 일정
+            </button>
+          ) : null}
         </td>
         <td className="px-3 py-2">
           <StatusChip s={st} />
@@ -300,7 +427,7 @@ function AbsenceTable({
       <table className="w-full text-[13px]">
         <thead>
           <tr className="bg-navy-50 text-left text-xs text-muted">
-            {["이름", "반", "담당", "결석일", "사유 · 구분", "보강", "상태", "드림+", "메모"].map((h) => (
+            {["이름", "반", "담당", "결석일", "사유 · 구분", "보강 일정", "상태", "드림+", "특이사항"].map((h) => (
               <th key={h} className="px-3 py-2.5 font-semibold">
                 {h}
               </th>
@@ -534,11 +661,9 @@ function AbsenceModal({ user, a, today, act, onClose }: { user: SessionUser; a: 
   const st = statusOf(a);
   const v = verdictOf(a);
   const blocked = v === "무단" && !a.paid;
-  const tOk = owner && !a.carried && !a.carryReq && !blocked;
+  const tOk = canPlan(user, a);
   const [reason, setReason] = useState(a.reason);
   const [memo, setMemo] = useState(a.memo);
-  const [date, setDate] = useState(today);
-  const [min, setMin] = useState<number | null>(16 * 60);
   const [carry, setCarry] = useState(false);
   const [reject, setReject] = useState(false);
   const up = (patch: Record<string, unknown>, ok?: string) => act({ action: "UPDATE", id: a.id, ...patch }, ok);
@@ -720,16 +845,8 @@ function AbsenceModal({ user, a, today, act, onClose }: { user: SessionUser; a: 
         ) : null}
         {tOk ? (
           <>
-            <div className="mt-2.5 flex flex-wrap items-center gap-1.5 rounded-lg bg-navy-50 p-2">
-              <input type="date" className="field w-40" value={date} onChange={(e) => setDate(e.target.value)} />
-              <TimeSelect className="w-44" value={min} onChange={setMin} />
-              <button type="button" className="btn btn-primary px-2.5 py-1 text-xs" onClick={() => void act({ action: "ADD_ROUND", id: a.id, type: "MAKEUP", date, startMin: min })}>
-                + 보강 추가
-              </button>
-              <span className="text-xs text-muted">또는</span>
-              <button type="button" className="btn px-2.5 py-1 text-xs" onClick={() => void act({ action: "ADD_ROUND", id: a.id, type: "TASK" })}>
-                📄 과제로 대체
-              </button>
+            <div className="mt-2.5">
+              <MakeupPicker a={a} today={today} act={act} />
             </div>
             <label className="mt-2 flex items-center gap-1.5 text-[13px]">
               <input type="checkbox" checked={a.more} onChange={() => void up({ more: !a.more })} /> 나눠서 진행 — 남은 보강 있음 <span className="text-muted">(체크하면 다 끝나도 「보강 전」)</span>
@@ -753,8 +870,8 @@ function AbsenceModal({ user, a, today, act, onClose }: { user: SessionUser; a: 
       </section>
 
       <section className="mb-2.5 rounded-xl border border-line px-3.5 py-3">
-        <h3 className="mb-2 text-sm font-bold text-navy-900">메모</h3>
-        <textarea className="field h-16" placeholder="특이사항" value={memo} onChange={(e) => setMemo(e.target.value)} />
+        <h3 className="mb-2 text-sm font-bold text-navy-900">특이사항</h3>
+        <textarea className="field h-16" placeholder="예) 학부모님이 다음 주 연락 주시기로" value={memo} onChange={(e) => setMemo(e.target.value)} />
       </section>
       <div className="text-xs leading-relaxed text-muted">
         {a.log.map((l, i) => (

@@ -191,6 +191,22 @@ body {
   animation: fadeIn 0.2s ease-out;
 }
 
+/* 접어 둔 출결 팝업 — 처리할 때까지 깜박인다 */
+@keyframes blinkAlert {
+  0%,
+  100% {
+    background: var(--color-alert);
+    box-shadow: 0 0 0 0 var(--color-alert-soft);
+  }
+  50% {
+    background: var(--color-navy-900);
+    box-shadow: 0 0 0 8px var(--color-alert-soft);
+  }
+}
+.blink-alert {
+  animation: blinkAlert 1s ease-in-out infinite;
+}
+
 /* 인쇄 — SR 좌석표 (A4 가로). 화면 틀과 팝업은 인쇄하지 않는다 */
 @media print {
   @page {

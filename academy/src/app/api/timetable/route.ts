@@ -1,5 +1,6 @@
 import { withUser } from "@/lib/api";
 import {
+  absentOn,
   conflictsForDay,
   listAlertOk,
   listBookings,
@@ -31,5 +32,6 @@ export const GET = withUser(() => {
     alertOk: listAlertOk(),
     conflicts: week.map((w) => ({ day: w.day, list: conflictsForDay(w.day, w.date) })),
     seats: sr.seats,
+    absents: absentOn(t),
   };
 });

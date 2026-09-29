@@ -9,6 +9,7 @@ import { teacherLabel, type MissionRequest, type SessionType, type SessionUser }
 import { can } from "../perm";
 import { getSetting, notify, nowIso, nowMin, row, rows, setSetting, today, transaction, userIdsWithRole } from "./base";
 import { listAllSessions, listSessions } from "./timetable";
+import { absentOn } from "./absence";
 
 export type SrClass = {
   id: number;
@@ -66,6 +67,8 @@ export type SrSnapshot = {
   dayUses: SeatUse[];
   adhoc: SrAdhoc[];
   leave: { classId: number; studentId: number; atMin: number }[];
+  /** 그 날짜 결석 — 자리는 빈자리로 (임시 자리로 쓸 수 있다) */
+  absent: { classId: number; studentId: number; reason: string }[];
   missions: SrMission[];
   requests: SrSeatRequest[];
   log: { date: string; atMin: number; text: string }[];
@@ -161,12 +164,20 @@ export function srSnapshot(date: string): SrSnapshot {
       )
       .all(date),
   );
+  const absentList = absentOn(date);
+  const absent: SrSnapshot["absent"] = [];
+  for (const c of classes)
+    for (const m of c.members) {
+      const a = absentList.find((x) => x.studentId === m.id && (x.classId === null || x.classId === c.id));
+      if (a) absent.push({ classId: c.id, studentId: m.id, reason: a.reason });
+    }
+  const isAbsent = (key: string) => absent.some((a) => `${a.classId}|${a.studentId}` === key);
   const dayUses = usesFrom(classes, dayBlocks, (c, s) => todaySeats.get(`${c}|${s}`) ?? weekly.get(`${c}|${s}`) ?? null, memberDays)
     .map((u) => {
       const l = leave.find((x) => `${x.classId}|${x.studentId}` === u.key);
       return l ? { ...u, end: Math.max(u.start, Math.min(u.end, l.atMin)) } : u;
     })
-    .filter((u) => u.end > u.start);
+    .filter((u) => u.end > u.start && !isAbsent(u.key));
   for (const a of adhoc) {
     dayUses.push({ key: `adhoc:${a.id}`, seat: a.seat, day, start: a.start, end: a.end, name: a.name, label: a.kind, classId: null, studentId: a.studentId, adhocId: a.id });
   }
@@ -201,7 +212,7 @@ export function srSnapshot(date: string): SrSnapshot {
 
   const dayClassIds: Record<number, number[]> = {};
   for (const s of listAllSessions()) (dayClassIds[s.dayOfWeek] ??= []).push(s.classId);
-  return { date, day, nowMin: nowMin(), classes, blocks, dayBlocks, seats, weekUses, dayUses, adhoc, leave, missions, requests, log, overflow, dayClassIds };
+  return { date, day, nowMin: nowMin(), classes, blocks, dayBlocks, seats, weekUses, dayUses, adhoc, leave, absent, missions, requests, log, overflow, dayClassIds };
 }
 
 function addLog(date: string, text: string): void {
@@ -383,6 +394,16 @@ export function srMission(user: SessionUser, classId: number, action: "RECEIVE" 
     user.id,
   );
   notify(t.id, "MISSION", "미션지 요청", `${cname} 미션지 없습니다. 준비해서 SR로 가져다주세요. (${fmtTime(nowMin())})`, "/dashboard");
+}
+
+/** 📄 미션지 확인 (데스크) — 약속 장소에 있는 반은 받음, 없는 반은 담당T에게 한 번에 요청 */
+export function srMissionCheck(user: SessionUser, have: number[], missing: number[]): void {
+  assert(can(user, "sr.desk"), "미션지는 데스크·관리자가 처리해요.");
+  assert(have.length + missing.length > 0, "확인할 반이 없어요.");
+  transaction(() => {
+    for (const id of have) srMission(user, id, "RECEIVE");
+    for (const id of missing) srMission(user, id, "REQUEST");
+  });
 }
 
 /** 선생님 화면에 띄울 미션지 요청 — 내 반 · 오늘 · 아직 전달 안 함 */
