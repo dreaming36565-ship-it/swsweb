@@ -46,7 +46,8 @@ export type Ctx = {
   reload: () => Promise<void>;
   /** 지금 요일 · 분 (1분마다) */
   now: { day: number; min: number };
-  openClass: (id: number) => void;
+  /** day = 누른 요일 — 숙제반은 그 요일 학생만 */
+  openClass: (id: number, day?: number) => void;
   editClass: (id: number | null) => void;
   setError: (msg: string | null) => void;
 };
@@ -92,7 +93,7 @@ export default function TimetableClient({ user, initialView }: { user: SessionUs
   const [data, setData] = useState<TimetableData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => ({ day: new Date().getDay(), min: minutesOfDay(new Date()) }));
-  const [detailId, setDetailId] = useState<number | null>(null);
+  const [detail, setDetail] = useState<{ id: number; day?: number } | null>(null);
   const [editing, setEditing] = useState<{ id: number | null } | null>(null);
   const [tool, setTool] = useState<"swap" | "assign" | "upload" | null>(null);
   const [print, setPrint] = useState<{ title: string; kind: "days" | "teachers"; ids: number[] } | null>(null);
@@ -123,9 +124,9 @@ export default function TimetableClient({ user, initialView }: { user: SessionUs
             data,
             reload,
             now,
-            openClass: (id) => setDetailId(id),
+            openClass: (id, day) => setDetail({ id, day }),
             editClass: (id) => {
-              setDetailId(null);
+              setDetail(null);
               setEditing({ id });
             },
             setError,
@@ -307,7 +308,7 @@ export default function TimetableClient({ user, initialView }: { user: SessionUs
           )}
         />
       ) : null}
-      {ctx && detailId !== null ? <ClassDetail ctx={ctx} classId={detailId} onClose={() => setDetailId(null)} /> : null}
+      {ctx && detail ? <ClassDetail ctx={ctx} classId={detail.id} day={detail.day} onClose={() => setDetail(null)} /> : null}
       {ctx && editing ? <ClassEditor ctx={ctx} classId={editing.id} onClose={() => setEditing(null)} /> : null}
       {ctx && tool === "swap" ? <SwapModal ctx={ctx} initialDay={showDay ? day : now.day} onClose={() => setTool(null)} /> : null}
       {ctx && tool === "assign" ? (

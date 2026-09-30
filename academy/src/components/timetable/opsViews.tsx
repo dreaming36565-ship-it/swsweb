@@ -10,7 +10,7 @@ import { quarterOf } from "@/lib/homework";
 import { DAY_LABELS, rangeLabel } from "@/lib/time";
 import { CHANGE_LABEL, teacherLabel, type ChangeKind, type ClassModel, type ClassPart } from "@/lib/types";
 import TimeGrid, { dayRange, fitRange, type GridBlock, type GridColumn, type SrItem } from "./TimeGrid";
-import { isSwapped, partBooks, partsOn, withStudents } from "./model";
+import { classesOn, isSwapped, partBooks, partsOn } from "./model";
 import type { Ctx } from "./TimetableClient";
 
 const CHG_BG: Record<ChangeKind, string> = { T: "bg-chg-t", H: "bg-chg-h", B: "bg-chg-b" };
@@ -92,7 +92,7 @@ export function OpsLegend() {
 type OnItem = { c: ClassModel; p: ClassPart; swapped: boolean };
 
 export function dayItems(ctx: Ctx, day: number): OnItem[] {
-  return withStudents(ctx.data.classes).flatMap((c) => {
+  return classesOn(ctx.data.classes, day).flatMap((c) => {
     const swapped = isSwapped(ctx.data.tempSwaps, c.id, day);
     return partsOn(c, day, swapped).map((p) => ({ c, p, swapped }));
   });
@@ -106,7 +106,7 @@ const colorsFor = (items: OnItem[]) => {
 const srRoomOf = (ctx: Ctx) => ctx.data.rooms.find((r) => r.isSr === 1);
 
 /** SR 칸 — SR룸을 쓰는 칸 (수업 없이 SR만 쓰는 반 포함) */
-export function srItems(ctx: Ctx, items: OnItem[], colors: Map<number, ClassColor>, onClick = true): SrItem[] {
+export function srItems(ctx: Ctx, items: OnItem[], colors: Map<number, ClassColor>, day: number, onClick = true): SrItem[] {
   const sr = srRoomOf(ctx);
   return items
     .filter(({ p }) => p.kind === "SR" && (!sr || p.roomId === sr.id || p.roomId === null))
@@ -117,7 +117,7 @@ export function srItems(ctx: Ctx, items: OnItem[], colors: Map<number, ClassColo
       start: p.start,
       end: p.end,
       color: colors.get(c.id),
-      onClick: onClick ? () => ctx.openClass(c.id) : undefined,
+      onClick: onClick ? () => ctx.openClass(c.id, day) : undefined,
       tag: swapped ? <TempTag /> : undefined,
     }));
 }
@@ -145,7 +145,7 @@ export function DaySheet({ ctx, day, print = false }: { ctx: Ctx; day: number; p
         kind: "class",
         hapban: c.hapbanWith !== null,
         title: `${c.name} ${rangeLabel(p.start, p.end)}`,
-        onClick: print ? undefined : () => ctx.openClass(c.id),
+        onClick: print ? undefined : () => ctx.openClass(c.id, day),
         content: opsContent(ctx, c, p, { extra: swapped ? <TempTag /> : null }),
       })),
     };
@@ -157,7 +157,7 @@ export function DaySheet({ ctx, day, print = false }: { ctx: Ctx; day: number; p
       from={a}
       to={z}
       columns={columns}
-      sr={{ label: sr?.name ?? "SR룸", seats: sr?.capacity ?? 24, items: srItems(ctx, items, colors, !print) }}
+      sr={{ label: sr?.name ?? "SR룸", seats: sr?.capacity ?? 24, items: srItems(ctx, items, colors, day, !print) }}
       nowMin={!print && day === ctx.now.day ? ctx.now.min : null}
       print={print}
     />
@@ -188,7 +188,7 @@ export function TeacherWeek({ ctx, teacherId, days, print = false }: { ctx: Ctx;
           kind: "class",
           hapban: c.hapbanWith !== null,
           title: `${c.name} ${rangeLabel(p.start, p.end)}`,
-          onClick: print ? undefined : () => ctx.openClass(c.id),
+          onClick: print ? undefined : () => ctx.openClass(c.id, d),
           content: opsContent(ctx, c, p, { extra: swapped ? <TempTag /> : null }),
         })),
       };

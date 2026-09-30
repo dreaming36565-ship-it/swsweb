@@ -177,7 +177,8 @@ export type ClassModel = {
   /** 담임(담당) 선생님 */
   teacherId: number | null;
   teacherName: string | null;
-  students: { id: number; name: string }[];
+  /** days = 숙제반처럼 요일마다 오는 학생이 다를 때 그 학생이 오는 요일 */
+  students: { id: number; name: string; days?: number[] }[];
   days: number[];
   parts: ClassPart[];
   /** 수업 없이 SR만 쓰는 반 (누적오답 · 숙제반) */

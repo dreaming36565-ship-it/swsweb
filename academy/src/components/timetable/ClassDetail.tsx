@@ -7,12 +7,16 @@ import Modal from "../Modal";
 import { apiPatch, errorMessage } from "@/lib/http";
 import { can } from "@/lib/perm";
 import { teacherLabel, type ClassPart } from "@/lib/types";
-import { course, dayLabel, ownerLabel, timeSpan } from "./model";
+import { course, dayLabel, onDay, ownerLabel, timeSpan } from "./model";
+import { DAY_LABELS } from "@/lib/time";
 import { DayTable, PartBooksModal } from "./views";
 import type { Ctx } from "./TimetableClient";
 
-export default function ClassDetail({ ctx, classId, onClose }: { ctx: Ctx; classId: number; onClose: () => void }) {
-  const c = ctx.data.classes.find((x) => x.id === classId);
+export default function ClassDetail({ ctx, classId, day, onClose }: { ctx: Ctx; classId: number; day?: number; onClose: () => void }) {
+  const found = ctx.data.classes.find((x) => x.id === classId);
+  // 숙제반은 누른 요일의 학생만 (요일 없이 열면 이번 달 전체)
+  const perDay = !!found && day !== undefined && found.students.some((s) => s.days);
+  const c = found && perDay ? onDay(found, day!) : found;
   const [editRoster, setEditRoster] = useState(false);
   const [names, setNames] = useState<string[]>(() => c?.students.map((s) => s.name) ?? []);
   const [input, setInput] = useState("");
@@ -36,7 +40,7 @@ export default function ClassDetail({ ctx, classId, onClose }: { ctx: Ctx; class
     <Modal
       open
       width={980}
-      title={`${c.name} (${c.students.length}명)`}
+      title={`${perDay ? `${DAY_LABELS[day!]} ` : ""}${c.name} (${c.students.length}명)`}
       subtitle={`${c.grade ?? ""} · ${course(c, ctx.data.books) || c.textbook || ""}`}
       onClose={onClose}
       footer={
@@ -76,7 +80,7 @@ export default function ClassDetail({ ctx, classId, onClose }: { ctx: Ctx; class
       <div className="mt-4">
         <div className="flex items-center gap-2">
           <b className="text-sm">학생 명단</b>
-          {c.grade === "숙제반" ? <span className="text-xs text-muted">숙제반 명단은 숙제 관리에서 (이번 달 신청 · 강제 숙제반)</span> : null}
+          {c.grade === "숙제반" ? <span className="text-xs text-muted">{perDay ? `${DAY_LABELS[day!]}요일에 오는 학생 · ` : ""}숙제반 명단은 숙제 관리에서 (이번 달 신청 · 강제 숙제반)</span> : null}
           {can(ctx.user, "students.write") && !editRoster && c.grade !== "숙제반" ? (
             <button type="button" className="btn px-2 py-0.5 text-xs" onClick={() => setEditRoster(true)}>
               ✏️ 명단 고치기

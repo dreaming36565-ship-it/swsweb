@@ -21,7 +21,8 @@ export type SrClass = {
   teacherName: string | null;
   /** 미션지가 꼭 있어야 하는 SR — 금·토 개별반과 숙제반을 뺀 모든 SR (누적오답 포함) */
   needsMission: boolean;
-  members: { id: number; name: string }[];
+  /** days = 숙제반처럼 그 학생이 오는 요일 (없으면 반의 SR 요일 모두) */
+  members: { id: number; name: string; days?: number[] }[];
 };
 
 export type SrMission = {
@@ -126,7 +127,7 @@ function srClasses(rosterDate = today()): { list: SrClass[]; memberDays: Map<str
       teacherId: i?.teacher_id ?? null,
       teacherName: i?.teacher_name ?? null,
       needsMission: type !== "INDIVIDUAL" && type !== "HOMEWORK",
-      members: c.members.map((id) => ({ id, name: names.get(id) ?? "" })).sort((a, b) => a.name.localeCompare(b.name, "ko")),
+      members: c.members.map((id) => ({ id, name: names.get(id) ?? "", days: roster.memberDays.get(`${c.id}|${id}`) })).sort((a, b) => a.name.localeCompare(b.name, "ko")),
     };
   });
   return { list, memberDays: roster.memberDays, blocks: roster.blocks.map(({ classId, day, start, end }) => ({ classId, day, start, end })) };
@@ -318,6 +319,7 @@ export function srSnapshot(date: string, opts: { preview?: boolean } = {}): SrSn
   const absent: SrSnapshot["absent"] = [];
   for (const c of classes)
     for (const m of c.members) {
+      if (m.days && !m.days.includes(day)) continue;
       const a = absentList.find((x) => x.studentId === m.id && (x.classId === null || x.classId === c.id));
       if (a) absent.push({ classId: c.id, studentId: m.id, reason: a.reason });
     }

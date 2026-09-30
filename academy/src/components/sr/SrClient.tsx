@@ -22,6 +22,8 @@ import type { SrAdhocRequest, SrClass, SrSnapshot } from "@/lib/repo/sr";
 import AdhocRequestPopup from "./AdhocRequestPopup";
 
 const WEEK = [1, 2, 3, 4, 5, 6, 0];
+/** 그 요일에 오는 학생 — 숙제반은 요일마다 다르다 */
+const membersOn = (c: SrClass, day: number) => c.members.filter((m) => !m.days || m.days.includes(day));
 type Move = { classId: number; studentId: number; name: string };
 type AdhocDraft = { name: string; kind: string; date: string; day: number; start: number; end: number };
 
@@ -918,7 +920,7 @@ function LiveView({
           {upcoming ? <span className="text-muted">{b.start - now}분 뒤 시작</span> : <span className={`font-extrabold ${left <= 20 ? "text-late" : ""}`}>{left}분 남음</span>}
         </div>
         <div className="text-xs text-muted">
-          {rangeLabel(b.start, b.end)} · {c.members.length}명
+          {rangeLabel(b.start, b.end)} · {membersOn(c, b.day).length}명
           {(() => {
             const n = snap.absent.filter((a) => a.classId === c.id).length;
             return n ? <b className="text-alert"> (결석 {n})</b> : null;
@@ -926,7 +928,7 @@ function LiveView({
           · {columnsOf(snap, c.id) || "—"}열{review ? " · 다 끝내면 하원" : ""}
         </div>
         <div className="mt-1 text-xs">
-          {c.members.map((m, i) => {
+          {membersOn(c, b.day).map((m, i) => {
             const gone = snap.leave.find((l) => l.classId === c.id && l.studentId === m.id);
             const absent = snap.absent.find((a) => a.classId === c.id && a.studentId === m.id);
             const seat = snap.dayUses.find((u) => u.key === `${c.id}|${m.id}`)?.seat ?? snap.seats.find((s) => s.classId === c.id && s.studentId === m.id)?.seat;
@@ -1304,7 +1306,7 @@ function Legend({ snap, classId, day, color, onMove }: { snap: SrSnapshot; class
         {LEVEL_NAME[c.level][0]}
       </span>
       <span className="text-xs text-muted">
-        {c.members.length}명 · {columnsOf(snap, c.id) || "—"}열 · {rangeLabel(b.start, b.end)}
+        {membersOn(c, day).length}명 · {columnsOf(snap, c.id) || "—"}열 · {rangeLabel(b.start, b.end)}
       </span>
       {mis}
       {onMove ? (

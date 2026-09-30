@@ -263,7 +263,8 @@ export function listClassModels(): ClassModel[] {
       .all(),
   );
   // 숙제반은 반 명단 대신 이번 달 신청 + 강제 참석 학생
-  const hwMembers = new Map(srRoster(db).classes.map((c) => [c.id, c.members]));
+  const roster = srRoster(db);
+  const hwMembers = new Map(roster.classes.map((c) => [c.id, c.members]));
   const names = new Map(rows<{ id: number; name: string }>(db.prepare("SELECT id, name FROM students").all()).map((x) => [x.id, x.name]));
   const ops = new Map(
     rows<{ id: number; level_changed: number; change_kind: string | null; change_note: string | null }>(
@@ -331,7 +332,7 @@ export function listClassModels(): ClassModel[] {
       teacherName: c.teacherName,
       students:
         c.grade === "숙제반"
-          ? (hwMembers.get(c.id) ?? []).map((id) => ({ id, name: names.get(id) ?? "" })).sort((a, b) => a.name.localeCompare(b.name, "ko"))
+          ? (hwMembers.get(c.id) ?? []).map((id) => ({ id, name: names.get(id) ?? "", days: roster.memberDays.get(`${c.id}|${id}`) ?? [] })).sort((a, b) => a.name.localeCompare(b.name, "ko"))
           : members.filter((m) => m.class_id === c.id).map((m) => ({ id: m.id, name: m.name })),
       days: [...new Set(ss.map((s) => s.dayOfWeek))].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)),
       parts,

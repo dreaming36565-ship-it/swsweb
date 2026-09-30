@@ -109,3 +109,10 @@ export const ownerLabel = (c: ClassModel) => (c.type === "HOMEWORK" ? "데스크
 
 /** 시간표에 보일 반 — 학생이 0명인 반(예: 학생 없는 요일의 누적오답)은 숨긴다. 반 관리에서는 모두 보인다 */
 export const withStudents = (classes: ClassModel[]) => classes.filter((c) => c.students.length > 0);
+
+/** 그 요일의 반 — 숙제반은 그 요일에 오는 학생만 (월 숙제반 1부 = 월요일 학생) */
+export const onDay = (c: ClassModel, day: number): ClassModel =>
+  c.students.some((s) => s.days) ? { ...c, students: c.students.filter((s) => !s.days || s.days.includes(day)) } : c;
+
+/** 그 요일 시간표에 보일 반 — 그 요일 학생이 0명인 반은 숨긴다 */
+export const classesOn = (classes: ClassModel[], day: number) => withStudents(classes.map((c) => onDay(c, day)));

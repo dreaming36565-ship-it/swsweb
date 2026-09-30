@@ -11,7 +11,7 @@ import { DAY_LABELS, fmtTime, overlaps, rangeLabel } from "@/lib/time";
 import { teacherLabel, type Book, type ClassModel, type ClassPart } from "@/lib/types";
 import TimeGrid, { dayRange, type GridBlock, type GridColumn } from "./TimeGrid";
 import { TempTag, opsContent, srItems } from "./opsViews";
-import { GRADE_ORDER, alertKey, course, dayLabel, isSwapped, levelOf, mainTeacher, ownerLabel, partBooks, partsOn, timeSpan, withStudents } from "./model";
+import { GRADE_ORDER, alertKey, classesOn, course, dayLabel, isSwapped, levelOf, mainTeacher, ownerLabel, partBooks, partsOn, timeSpan, withStudents } from "./model";
 import type { Ctx } from "./TimetableClient";
 
 /* ------------------------------------------------------------ 공통 */
@@ -43,7 +43,7 @@ export function ConflictBar({ ctx, day }: { ctx: Ctx; day: number }) {
 export function RoomView({ ctx, day }: { ctx: Ctx; day: number }) {
   const confirm = useConfirm();
   const { rooms, bookings, tempSwaps, alertOk, week, today } = ctx.data;
-  const classes = withStudents(ctx.data.classes);
+  const classes = classesOn(ctx.data.classes, day);
   const date = week.find((w) => w.day === day)?.date ?? today;
   const past = date < today;
   const colors = dayColors(classes, day);
@@ -112,7 +112,7 @@ export function RoomView({ ctx, day }: { ctx: Ctx; day: number }) {
             kind: p.kind === "SR" ? "sr" : "class",
             hapban: p.kind === "CLASS" && c.hapbanWith !== null,
             title: `${c.name} ${p.label} ${rangeLabel(p.start, p.end)}`,
-            onClick: () => ctx.openClass(c.id),
+            onClick: () => ctx.openClass(c.id, day),
             content: opsContent(ctx, c, p, {
               names: false,
               room: false,
@@ -203,7 +203,7 @@ export function RoomView({ ctx, day }: { ctx: Ctx; day: number }) {
         from={a}
         to={z}
         columns={columns}
-        sr={srRoom ? { label: srRoom.name, seats: srRoom.capacity ?? 24, items: srItems(ctx, dayItemsAll, colors) } : null}
+        sr={srRoom ? { label: srRoom.name, seats: srRoom.capacity ?? 24, items: srItems(ctx, dayItemsAll, colors, day) } : null}
         nowMin={day === ctx.now.day ? ctx.now.min : null}
       />
       <div className="card p-4">
