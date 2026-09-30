@@ -299,6 +299,10 @@ export default function SrClient({ user }: { user: SessionUser }) {
           user={user}
           snap={live}
           target={student}
+          onChanged={(msg) => {
+            void reload();
+            setToast(msg);
+          }}
           onClose={() => setStudent(null)}
           onLeave={() => void act({ action: "LEAVE", classId: student.classId, studentId: student.studentId }).then(() => setStudent(null))}
           onMove={() => {
@@ -1324,6 +1328,7 @@ function StudentModal({
   user,
   snap,
   target,
+  onChanged,
   onClose,
   onLeave,
   onMove,
@@ -1331,6 +1336,7 @@ function StudentModal({
   user: SessionUser;
   snap: SrSnapshot;
   target: Move;
+  onChanged: (msg: string) => void;
   onClose: () => void;
   onLeave: () => void;
   onMove: () => void;
@@ -1342,10 +1348,34 @@ function StudentModal({
   const others = snap.classes.filter((x) => x.id !== target.classId && x.members.some((m) => m.id === target.studentId)).map((x) => x.name);
   const review = c?.type === "REVIEW";
   const left = snap.leave.some((l) => l.classId === target.classId && l.studentId === target.studentId);
+  const early = c?.members.find((m) => m.id === target.studentId)?.early ?? {};
+  const days = c?.members.find((m) => m.id === target.studentId)?.days;
+  const editEarly = can(user, "sr.move");
+  /** 📌 일찍 오기 고치는 중인 요일 · 시각 */
+  const [draft, setDraft] = useState<{ day: number; start: number | null } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const saveEarly = async (day: number, start: number | null) => {
+    setErr(null);
+    setBusy(true);
+    try {
+      const r = await apiPost<{ movedTo: string | null }>("/api/sr/action", { action: "EARLY", classId: target.classId, studentId: target.studentId, day, start });
+      setDraft(null);
+      onChanged(
+        start === null
+          ? `${target.name} ${DAY_LABELS[day]} 일찍 오기 없앰`
+          : `📌 ${target.name} ${DAY_LABELS[day]} ${fmtTime(start)}부터${r?.movedTo ? ` · 자리 ${r.movedTo}(으)로 옮김` : ""}`,
+      );
+    } catch (e) {
+      setErr(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <Modal
       open
-      width={520}
+      width={640}
       title={target.name}
       subtitle={`${c?.name ?? ""}${others.length ? ` · 다른 반 ${others.join(", ")}` : ""}`}
       onClose={onClose}
@@ -1375,19 +1405,65 @@ function StudentModal({
             <th className="px-2.5 py-2">요일</th>
             <th className="px-2.5 py-2">SR 시간</th>
             <th className="px-2.5 py-2">자리</th>
+            <th className="px-2.5 py-2">📌 일찍 오기</th>
           </tr>
         </thead>
         <tbody>
-          {blocks.map((b) => (
-            <tr key={b.day} className="border-t border-line">
-              <td className="px-2.5 py-2">{DAY_LABELS[b.day]}</td>
-              <td className="px-2.5 py-2">{rangeLabel(b.start, b.end)}</td>
-              <td className="px-2.5 py-2 font-bold">{seat?.seat ?? "—"}</td>
-            </tr>
-          ))}
+          {blocks
+            .filter((b) => !days || days.includes(b.day))
+            .map((b) => {
+              const e = early[b.day];
+              const editing = draft?.day === b.day;
+              return (
+                <tr key={b.day} className={`border-t border-line ${e !== undefined ? "bg-srpink-soft" : ""}`}>
+                  <td className="px-2.5 py-2">{DAY_LABELS[b.day]}</td>
+                  <td className="px-2.5 py-2">
+                    {e !== undefined ? <b className="text-srpink">{rangeLabel(e, b.end)}</b> : rangeLabel(b.start, b.end)}
+                    {e !== undefined ? <div className="text-[11px] text-muted">SR {rangeLabel(b.start, b.end)} 전부터</div> : null}
+                  </td>
+                  <td className="px-2.5 py-2 font-bold">{seat?.seat ?? "—"}</td>
+                  <td className="px-2.5 py-2">
+                    {editing ? (
+                      <span className="flex items-center gap-1">
+                        <TimeSelect value={draft.start} onChange={(v) => setDraft({ day: b.day, start: v })} />
+                        <button type="button" className="btn btn-primary px-2 py-0.5 text-xs" disabled={busy || draft.start === null} onClick={() => draft.start !== null && void saveEarly(b.day, draft.start)}>
+                          저장
+                        </button>
+                        <button type="button" className="btn px-2 py-0.5 text-xs" onClick={() => setDraft(null)}>
+                          취소
+                        </button>
+                      </span>
+                    ) : e !== undefined ? (
+                      <span className="flex items-center gap-1">
+                        <b className="text-srpink">{fmtTime(e)}부터</b>
+                        {editEarly ? (
+                          <>
+                            <button type="button" className="btn px-1.5 py-0 text-[11px]" onClick={() => setDraft({ day: b.day, start: e })}>
+                              ✏️
+                            </button>
+                            <button type="button" className="btn px-1.5 py-0 text-[11px]" disabled={busy} onClick={() => void saveEarly(b.day, null)}>
+                              없애기
+                            </button>
+                          </>
+                        ) : null}
+                      </span>
+                    ) : editEarly ? (
+                      <button type="button" className="btn px-2 py-0.5 text-xs" onClick={() => setDraft({ day: b.day, start: Math.max(6 * 60, b.start - 50) })}>
+                        ＋ 일찍 오기
+                      </button>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
         </tbody>
       </table>
-      <p className="mt-2 text-xs text-muted">매주 이 요일·시간에 늘 이 자리예요.</p>
+      {err ? <div className="mt-2 rounded-lg bg-alert-soft px-3 py-2 text-sm font-semibold text-alert">{err}</div> : null}
+      <p className="mt-2 text-xs text-muted">
+        매주 이 요일·시간에 늘 이 자리예요. <b>📌 일찍 오기</b> = SR 전에 일찍 와서(예: 추가공부) SR 끝까지 자리 이동 없이 — 그 시간 내내 빈 자리만.
+      </p>
       {review ? (
         <div className="mt-2 rounded-lg border border-late bg-late-soft px-3 py-2 text-sm text-late">
           누적오답은 다 마치면 하원해요. <b>🏠 하원</b>을 누르면 그때부터 오늘 이 자리가 빈자리가 되고, 임시 자리로 쓸 수 있어요.

@@ -78,7 +78,12 @@ type UserDbRow = {
   active: number;
   employment: string;
   workDays: string;
+  seenAt: string | null;
+  notifyState: string | null;
 };
+
+/** 30초 안에 4초 폴링이 왔으면 「켜져 있음」 */
+const ONLINE_MS = 30_000;
 
 const toStaff = (u: UserDbRow): StaffUser => ({
   id: u.id,
@@ -89,13 +94,22 @@ const toStaff = (u: UserDbRow): StaffUser => ({
   active: u.active === 1 ? 1 : 0,
   partTime: u.employment === "PART",
   workDays: parseDays(u.workDays),
+  online: !!u.seenAt && Date.now() - Date.parse(u.seenAt) < ONLINE_MS,
+  seenAt: u.seenAt,
+  notifyState: (["granted", "default", "denied", "none"].includes(u.notifyState ?? "") ? u.notifyState : null) as StaffUser["notifyState"],
 });
+
+/** 4초 폴링 — 앱을 켜 두었음 + 그 컴퓨터 윈도우 알림 상태 */
+export function touchUser(userId: number, notifyState: string | null): void {
+  const state = ["granted", "default", "denied", "none"].includes(notifyState ?? "") ? notifyState : null;
+  getDb().prepare("UPDATE users SET seen_at = ?, notify_state = COALESCE(?, notify_state) WHERE id = ?").run(new Date().toISOString(), state, userId);
+}
 
 export function listUsers(): StaffUser[] {
   return rows<UserDbRow>(
     getDb()
       .prepare(
-        "SELECT id, login_id AS loginId, name, role, roles, department, active, employment, work_days AS workDays FROM users ORDER BY id",
+        "SELECT id, login_id AS loginId, name, role, roles, department, active, employment, work_days AS workDays, seen_at AS seenAt, notify_state AS notifyState FROM users ORDER BY id",
       )
       .all(),
   ).map(toStaff);

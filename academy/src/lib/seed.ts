@@ -342,7 +342,31 @@ export function marksOf(db: DatabaseSync): Map<number, Map<string, Mark>> {
   return out;
 }
 
-/** 강제 숙제반 학생의 칸 · 요일별 방법 (지금 진행 중인 회차가 있는 학생만) */
+const hasColumn = (db: DatabaseSync, table: string, col: string) =>
+  (q(db, `PRAGMA table_info(${table})`).all() as { name: string }[]).some((c) => c.name === col);
+
+/** 강제 숙제반 면제 학생 (학생id → 사유). 마이그레이션 7 전 단계에서는 빈 목록 */
+export function hwExempts(db: DatabaseSync): Map<number, string> {
+  if (!hasColumn(db, "students", "hw_exempt")) return new Map();
+  return new Map(
+    (q(db, "SELECT id, hw_exempt_note FROM students WHERE hw_exempt = 1").all() as { id: number; hw_exempt_note: string | null }[]).map(
+      (r) => [r.id, r.hw_exempt_note ?? ""] as const,
+    ),
+  );
+}
+
+/** 📌 SR 일찍 오기 — "반id|학생id|요일" → 시작 시각(분) */
+export function srEarly(db: DatabaseSync): Map<string, number> {
+  const has = (q(db, "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'sr_early'").get() as { n: number }).n > 0;
+  if (!has) return new Map();
+  return new Map(
+    (q(db, "SELECT class_id, student_id, day, start_min FROM sr_early").all() as { class_id: number; student_id: number; day: number; start_min: number }[]).map(
+      (r) => [`${r.class_id}|${r.student_id}|${r.day}`, r.start_min] as const,
+    ),
+  );
+}
+
+/** 강제 숙제반 학생의 칸 · 요일별 방법 (지금 진행 중인 회차가 있는 학생만 · 면제 학생은 빼고) */
 export function forcedPlans(db: DatabaseSync, today: string): Map<number, { plan: HwPlan }> {
   const slots = homeworkSlots(db);
   const marks = marksOf(db);
@@ -368,8 +392,9 @@ export function forcedPlans(db: DatabaseSync, today: string): Map<number, { plan
     plans.set(r.student_id, p);
   }
   const out = new Map<number, { plan: HwPlan }>();
+  const exempt = hwExempts(db);
   for (const st of homeworkStudents(db)) {
-    if (!st.regular) continue;
+    if (!st.regular || exempt.has(st.id)) continue;
     const t = timeline(marks.get(st.id) ?? new Map(), checkDatesOf(st, start, today), start, today);
     if (!t.cur) continue;
     const plan =
@@ -393,6 +418,8 @@ export function srRoster(
   memberDays: Map<string, number[]>;
   /** 🔗 합반 짝 (반id → 짝 반id) */
   partners: Map<number, number>;
+  /** 📌 일찍 오기 — "반id|학생id|요일" → 시작 시각 */
+  early: Map<string, number>;
 } {
   // 합반 칸은 마이그레이션 3단계에서 생긴다 — 그 전 단계(1단계의 자리 계산)에서는 없다
   const hasHapban = (q(db, "PRAGMA table_info(classes)").all() as { name: string }[]).some((c) => c.name === "hapban_with");
@@ -464,6 +491,7 @@ export function srRoster(
     blocks,
     memberDays,
     partners,
+    early: srEarly(db),
   };
 }
 
@@ -484,7 +512,7 @@ export type SrPlanOpts = {
 /** 자리 계산만 (저장 안 함) — 미리보기 · 바뀌는 학생 보기 */
 export function planSrSeats(db: DatabaseSync, opts: SrPlanOpts = {}) {
   const date = opts.date ?? dateKey(new Date());
-  const { classes, blocks, partners, memberDays } = srRoster(db, date);
+  const { classes, blocks, partners, memberDays, early } = srRoster(db, date);
   const existing = opts.base ? opts.base.map((b) => ({ ...b, manual: false })) : (
     q(db, "SELECT class_id, student_id, seat, manual FROM sr_seats").all() as {
       class_id: number;
@@ -493,7 +521,7 @@ export function planSrSeats(db: DatabaseSync, opts: SrPlanOpts = {}) {
       manual: number;
     }[]
   ).map((e) => ({ classId: e.class_id, studentId: e.student_id, seat: e.seat, manual: e.manual === 1 }));
-  return planSeats({ classes, blocks, existing, pack: opts.pack, fresh: opts.fresh && !opts.base, partners, memberDays, rules: srRulesFor(date.slice(0, 7)) });
+  return planSeats({ classes, blocks, existing, pack: opts.pack, fresh: opts.fresh && !opts.base, partners, memberDays, early, rules: srRulesFor(date.slice(0, 7)) });
 }
 
 export function rebuildSrSeats(db: DatabaseSync, opts: SrPlanOpts = {}): { overflow: number } {

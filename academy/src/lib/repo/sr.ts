@@ -21,8 +21,8 @@ export type SrClass = {
   teacherName: string | null;
   /** 미션지가 꼭 있어야 하는 SR — 금·토 개별반과 숙제반을 뺀 모든 SR (누적오답 포함) */
   needsMission: boolean;
-  /** days = 숙제반처럼 그 학생이 오는 요일 (없으면 반의 SR 요일 모두) */
-  members: { id: number; name: string; days?: number[] }[];
+  /** days = 숙제반처럼 그 학생이 오는 요일 (없으면 반의 SR 요일 모두) · early = 📌 일찍 오기 { 요일: 시작 시각 } */
+  members: { id: number; name: string; days?: number[]; early?: Record<number, number> }[];
 };
 
 export type SrMission = {
@@ -116,6 +116,14 @@ function srClasses(rosterDate = today()): { list: SrClass[]; memberDays: Map<str
       .all(),
   );
   const names = new Map(rows<{ id: number; name: string }>(db.prepare("SELECT id, name FROM students").all()).map((s) => [s.id, s.name]));
+  const earlyOf = (classId: number, studentId: number) => {
+    let out: Record<number, number> | undefined;
+    for (const [k, start] of roster.early) {
+      const [c, st, d] = k.split("|").map(Number);
+      if (c === classId && st === studentId) (out ??= {})[d] = start;
+    }
+    return out;
+  };
   const list = roster.classes.map((c) => {
     const i = info.find((x) => x.id === c.id);
     const type = (i?.type ?? "REGULAR") as SessionType;
@@ -127,7 +135,7 @@ function srClasses(rosterDate = today()): { list: SrClass[]; memberDays: Map<str
       teacherId: i?.teacher_id ?? null,
       teacherName: i?.teacher_name ?? null,
       needsMission: type !== "INDIVIDUAL" && type !== "HOMEWORK",
-      members: c.members.map((id) => ({ id, name: names.get(id) ?? "", days: roster.memberDays.get(`${c.id}|${id}`) })).sort((a, b) => a.name.localeCompare(b.name, "ko")),
+      members: c.members.map((id) => ({ id, name: names.get(id) ?? "", days: roster.memberDays.get(`${c.id}|${id}`), early: earlyOf(c.id, id) })).sort((a, b) => a.name.localeCompare(b.name, "ko")),
     };
   });
   return { list, memberDays: roster.memberDays, blocks: roster.blocks.map(({ classId, day, start, end }) => ({ classId, day, start, end })) };
@@ -155,7 +163,10 @@ function usesFrom(
       if (days && !days.includes(b.day)) continue;
       const seat = seatOf(c.id, m.id);
       if (!seat) continue;
-      out.push({ key: `${c.id}|${m.id}`, seat, day: b.day, start: b.start, end: b.end, name: m.name, label: c.name, classId: c.id, studentId: m.id });
+      // 📌 일찍 오기 — 그 요일은 더 일찍부터 같은 자리
+      const e = m.early?.[b.day];
+      const start = e !== undefined && e < b.start ? e : b.start;
+      out.push({ key: `${c.id}|${m.id}`, seat, day: b.day, start, end: b.end, name: m.name, label: c.name, classId: c.id, studentId: m.id });
     }
   }
   return out;
@@ -404,6 +415,50 @@ export function srMove(user: SessionUser, classId: number, studentId: number, se
     )
     .run(classId, studentId, seat);
   addLog(today(), `${who(user)} · ${className(classId)} ${studentName(studentId)} ${cur?.seat ?? "—"} → ${seat}`);
+}
+
+/**
+ * 📌 SR 일찍 오기 (데스크·관리자) — 그 요일은 start 부터 그 반 SR 끝까지 같은 자리. start = null 이면 없앰.
+ * 지금 자리가 그 시간에 비어 있지 않으면 그 시간 내내 빈 자리로 옮긴다(같은 열 먼저). 빈 자리가 없으면 거절.
+ * 돌려주는 값 = 옮긴 자리 (안 옮겼으면 null)
+ */
+export function srSetEarly(user: SessionUser, classId: number, studentId: number, day: number, start: number | null): { movedTo: string | null } {
+  assert(can(user, "sr.move"), "일찍 오기는 데스크·관리자만 정할 수 있어요.");
+  const db = getDb();
+  const block = srClasses().blocks.find((b) => b.classId === classId && b.day === day);
+  assert(block, `${DAY_LABELS[day]}요일에는 이 반 SR이 없어요.`);
+  const label = `${className(classId)} ${studentName(studentId)} ${DAY_LABELS[day]}`;
+  if (start === null) {
+    db.prepare("DELETE FROM sr_early WHERE class_id = ? AND student_id = ? AND day = ?").run(classId, studentId, day);
+    addLog(today(), `${who(user)} · 📌 일찍 오기 없앰 · ${label}`);
+    return { movedTo: null };
+  }
+  assert(Number.isInteger(start) && start % 10 === 0 && start >= 6 * 60, "시각을 다시 골라 주세요.");
+  assert(start < block.start, `SR 시작(${fmtTime(block.start)})보다 이른 시각으로 골라 주세요.`);
+  return transaction(() => {
+    db.prepare(
+      "INSERT INTO sr_early (class_id, student_id, day, start_min) VALUES (?, ?, ?, ?) ON CONFLICT(class_id, student_id, day) DO UPDATE SET start_min = excluded.start_min",
+    ).run(classId, studentId, day, start);
+    const snap = srSnapshot(today());
+    const key = `${classId}|${studentId}`;
+    const mine = snap.seats.find((x) => x.classId === classId && x.studentId === studentId);
+    const own = keyBlocks(snap.weekUses, key, snap.blocks.filter((b) => b.classId === classId));
+    const movable = movableSeatsFor(snap.weekUses, own, key);
+    let movedTo: string | null = null;
+    if (!mine || movable.get(mine.seat)) {
+      const free = SEATS.filter((x) => !movable.get(x));
+      const col = mine ? seatCol(mine.seat) : "";
+      const pick = free.find((x) => seatCol(x) === col) ?? free[0];
+      const who2 = mine ? movable.get(mine.seat) : null;
+      assert(pick, `${fmtTime(start)}부터 앉을 빈자리가 없어요${who2 ? ` — ${mine?.seat}은(는) ${who2.name}(${who2.label})이(가) 써요` : ""}.`);
+      db.prepare(
+        "INSERT INTO sr_seats (class_id, student_id, seat, manual) VALUES (?, ?, ?, 1) ON CONFLICT(class_id, student_id) DO UPDATE SET seat = excluded.seat, manual = 1",
+      ).run(classId, studentId, pick);
+      movedTo = pick;
+    }
+    addLog(today(), `${who(user)} · 📌 일찍 오기 · ${label} ${fmtTime(start)}부터${movedTo ? ` (${mine?.seat ?? "—"} → ${movedTo})` : ""}`);
+    return { movedTo };
+  });
 }
 
 /** 🙋 자리 요청 (선생님) — 데스크·관리자가 승인하면 반영 */

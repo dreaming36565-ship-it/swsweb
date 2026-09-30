@@ -1,5 +1,5 @@
-import { withUser } from "@/lib/api";
-import { adhocRequestsForPopup, missionsForTeacher, pendingGroupsForUser, remindCerts, srAutoPack, tickAttendance } from "@/lib/repo";
+import { strParam, withUser } from "@/lib/api";
+import { adhocRequestsForPopup, missionsForTeacher, pendingGroupsForUser, remindCerts, srAutoPack, tickAttendance, touchUser } from "@/lib/repo";
 import { dateKey, minutesOfDay } from "@/lib/time";
 import { dailyBackup } from "@/lib/backup";
 
@@ -8,8 +8,10 @@ import { dailyBackup } from "@/lib/backup";
  * 수업·알파 중 먼저 시작하는 쪽 +2분이 지난 수업의 출결을 열고, 내가 처리할 팝업(같은 시각 반 묶음)을 돌려준다.
  * 선생님에게는 📄 미션지 요청 팝업도 함께. 데스크에게는 🙋 SR 자리 요청 팝업. 매달 1일에는 SR 월초 자리 정리를 한 번 한다.
  * 하루 한 번 📷 숙제인증 확인 안 된 날을 담당T에게 알린다. 하루 한 번 자동 백업(최근 14개).
+ * ?n= 그 컴퓨터 윈도우 알림 상태 — 계정 탭의 「학원앱 켜짐 / 알림」 표시용으로 적어 둔다.
  */
-export const GET = withUser(({ user }) => {
+export const GET = withUser(({ user, req }) => {
+  touchUser(user.id, strParam(req, "n"));
   const now = new Date();
   const date = dateKey(now);
   tickAttendance(date, now.getDay(), minutesOfDay(now));

@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Modal from "../Modal";
+import Combobox, { type ComboValue } from "../Combobox";
 import { TrashButton, usePurge } from "../Purge";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
 import { can } from "@/lib/perm";
@@ -63,7 +64,7 @@ export default function HomeworkClient({ user, initialView }: { user: SessionUse
   const [mine, setMine] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [modal, setModal] = useState<{ kind: "plan" | "late" | "apply" | "form"; studentId?: number; lateId?: number } | null>(null);
+  const [modal, setModal] = useState<{ kind: "plan" | "late" | "apply" | "form" | "exempt"; studentId?: number; lateId?: number } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -165,6 +166,18 @@ export default function HomeworkClient({ user, initialView }: { user: SessionUse
       {data && h && modal?.kind === "plan" && modal.studentId ? <PlanModal data={data} h={h} studentId={modal.studentId} act={act} onClose={() => setModal(null)} /> : null}
       {data && h && modal?.kind === "late" && modal.lateId ? <LateModal data={data} h={h} lateId={modal.lateId} act={act} onClose={() => setModal(null)} /> : null}
       {data && h && modal?.kind === "apply" ? <ApplyModal data={data} h={h} months={months} studentId={modal.studentId} month={month} act={act} onClose={() => setModal(null)} onMonth={setMonth} /> : null}
+      {data && modal?.kind === "exempt" ? (
+        <ExemptModal
+          data={data}
+          studentId={modal.studentId}
+          onClose={() => setModal(null)}
+          onSaved={(msg) => {
+            setModal(null);
+            setToast(msg);
+            void load();
+          }}
+        />
+      ) : null}
       {data && modal?.kind === "form" ? <FormModal data={data} month={month} months={months} act={act} onClose={() => setModal(null)} /> : null}
       {toast ? <div className="fixed bottom-6 left-1/2 z-[90] -translate-x-1/2 rounded-xl bg-navy-900 px-5 py-2.5 text-sm font-semibold text-white">{toast}</div> : null}
     </div>
@@ -295,7 +308,8 @@ function CheckView({
 
   const setMark = async (st: Student, date: string, mark: string) => {
     const res = (await act({ action: "MARK", studentId: st.id, date, mark: mark || null })) as { started?: boolean; graduated?: boolean } | false;
-    if (res && res.started) setToast(`⚠ ${st.name} 카운트 2 — 강제 숙제반 자동 등록 · ${teacherLabel(st.teacherName)} 알림`);
+    if (res && res.started && st.exempt) setToast(`⚠ ${st.name} 카운트 2 — 강제 숙제반 면제(${st.exempt}) · 알림 없음`);
+    else if (res && res.started) setToast(`⚠ ${st.name} 카운트 2 — 강제 숙제반 자동 등록 · ${teacherLabel(st.teacherName)} 알림`);
     else if (res && res.graduated) setToast(`🎓 ${st.name} 4연속 성공 — 숙제반 졸업, 카운트 0부터`);
   };
 
@@ -412,7 +426,13 @@ function CheckView({
                         ) : null}
                         {st.name}
                         <span className={`ml-1 inline-block min-w-[30px] rounded-md px-1 text-center font-extrabold ${t.count >= 2 ? "bg-alert-soft text-alert" : t.count >= 1.5 ? "bg-late-soft text-late" : "bg-navy-50"}`}>{t.count}</span>
-                        {t.cur ? <span className="ml-1 rounded bg-alert-soft px-1 text-[11px] font-extrabold text-alert" title="강제 숙제반 — 연속 성공">숙제반 {t.cur.streak}/4</span> : null}
+                        {t.cur && st.exempt ? (
+                          <span className="ml-1 rounded bg-navy-50 px-1 text-[11px] font-extrabold text-muted" title={`강제 숙제반 면제 — ${st.exempt}`}>
+                            면제 {t.cur.streak}/4
+                          </span>
+                        ) : t.cur ? (
+                          <span className="ml-1 rounded bg-alert-soft px-1 text-[11px] font-extrabold text-alert" title="강제 숙제반 — 연속 성공">숙제반 {t.cur.streak}/4</span>
+                        ) : null}
                       </td>
                       <td className="truncate border border-line px-1.5 text-muted">{st.textbook ?? ""}</td>
                       {regDates.map((d) => cell(d, false))}
@@ -451,7 +471,7 @@ function ClassView({
   setMonth: (m: string) => void;
   months: string[];
   act: Act;
-  open: (m: { kind: "plan" | "late" | "apply"; studentId?: number; lateId?: number }) => void;
+  open: (m: { kind: "plan" | "late" | "apply" | "exempt"; studentId?: number; lateId?: number }) => void;
 }) {
   const edit = can(user, "homework.class");
   /** 📷 인증 확인 — 담당T(내 반) · 관리자 · 데스크 */
@@ -466,9 +486,11 @@ function ClassView({
       if (c.start <= end && (c.gradAt ?? "9999") >= days[0]) rows.push({ st, c, i, total: t.cycles.length });
     });
   }
-  rows.sort((a, b) => Number(!!a.c.gradAt) - Number(!!b.c.gradAt) || a.c.start.localeCompare(b.c.start));
+  // 면제 학생은 맨 아래 (명단에만 보임)
+  rows.sort((a, b) => Number(!!a.st.exempt) - Number(!!b.st.exempt) || Number(!!a.c.gradAt) - Number(!!b.c.gradAt) || a.c.start.localeCompare(b.c.start));
+  const active = rows.filter((r) => !r.st.exempt);
   const seen = (st: Student, start: string) => data.seen.some((s) => s.studentId === st.id && s.start === start);
-  const newForced = rows.filter((r) => !r.c.gradAt && r.c.start >= addDays(data.today, -7) && !seen(r.st, r.c.start));
+  const newForced = active.filter((r) => !r.c.gradAt && r.c.start >= addDays(data.today, -7) && !seen(r.st, r.c.start));
   const lateTodo = data.late.filter((l) => !l.done && !l.date);
   // 지각 「횟수」는 분기마다 0부터지만, 3회를 채워 이미 생긴 숙제반 1회는 다음 분기로 넘어간다
   const qStart = quarterOf(data.today).start;
@@ -476,9 +498,9 @@ function ClassView({
     !l.done && l.lates.length > 0 && l.lates[l.lates.length - 1] < qStart ? (
       <span className="ml-1 rounded bg-navy-100 px-1 text-[11px] font-extrabold text-navy-800">지난 분기에서 넘어옴</span>
     ) : null;
-  const misuse = rows.filter((r) => !r.c.gradAt).map((r) => ({ ...r, issues: h.issues(r.st, r.c, month) })).filter((r) => r.issues.length);
+  const misuse = active.filter((r) => !r.c.gradAt).map((r) => ({ ...r, issues: h.issues(r.st, r.c, month) })).filter((r) => r.issues.length);
   // 📷 확인 안 한 인증 — 내가 확인할 수 있는 학생만 (선생님 = 내 반)
-  const certTodo = rows
+  const certTodo = active
     .filter((r) => !r.c.gradAt && certEdit(r.st))
     .map((r) => ({ ...r, miss: h.unchecked(r.st, r.c) }))
     .filter((r) => r.miss.length);
@@ -568,6 +590,11 @@ function ClassView({
 
       <div className="card px-3 py-2.5">
         <b className="text-[15px]">⚠ 강제 숙제반 — {Number(month.slice(5))}월</b>{" "}
+        {edit ? (
+          <button type="button" className="btn float-right px-2 py-0.5 text-xs" onClick={() => open({ kind: "exempt" })}>
+            🚫 면제 학생{data.students.some((x) => x.exempt) ? ` ${data.students.filter((x) => x.exempt).length}명` : ""}
+          </button>
+        ) : null}
         <span className="text-xs text-muted">
           카운트 2가 된 날 시작 → 그 뒤 SR 숙제검사 <b>4번 연속 완료</b>면 졸업 (미흡이면 0부터 · 결석은 건너뜀). 숙제검사 표와 자동으로 이어져요.
         </span>
@@ -604,25 +631,37 @@ function ClassView({
                 </tr>
               ) : null}
               {rows.map(({ st, c, i, total }) => {
-                const plan = h.planOf(st);
-                const iss = h.issues(st, c, month);
+                const ex = st.exempt;
+                const plan: HwPlan = ex ? {} : h.planOf(st);
+                const iss = ex ? [] : h.issues(st, c, month);
                 const blockedFrom = iss[1]?.d; // 2번째 문제가 난 날 뒤로는 인증 불가
                 const applying = data.apply.some((a) => a.studentId === st.id && a.month === month);
                 return (
-                  <tr key={`${st.id}-${c.start}`}>
+                  <tr key={`${st.id}-${c.start}`} className={ex ? "bg-navy-50 text-muted" : ""}>
                     <td className="h-[30px] truncate border border-line px-1.5 text-xs">
                       <b>{st.name}</b> <span className="text-muted">{st.regular?.name}</span>
+                      {ex ? <span className="ml-1 rounded bg-white px-1 font-extrabold text-muted ring-1 ring-line">면제</span> : null}
                       {total > 1 ? <span className="text-muted"> {i + 1}회차</span> : null}
-                      {applying ? <span className="ml-1 rounded bg-present-soft px-1 font-extrabold text-navy-800" title="신청 숙제반 학생인데 강제도 — 숙제반 시간에 더 집중하도록 독려">🔥신청</span> : null}
+                      {applying && !ex ? <span className="ml-1 rounded bg-present-soft px-1 font-extrabold text-navy-800" title="신청 숙제반 학생인데 강제도 — 숙제반 시간에 더 집중하도록 독려">🔥신청</span> : null}
                       {iss.length ? (
                         <span className={`ml-1 rounded px-1 font-extrabold ${iss.length >= 2 ? "bg-alert-soft text-alert" : "bg-late-soft text-late"}`} title={iss.map((x) => `${md(x.d)} ${x.why}`).join(", ")}>
                           {iss.length >= 2 ? "⛔인증불가" : "⚠경고"}
                         </span>
                       ) : null}
                     </td>
-                    <td className="truncate border border-line px-1.5 text-xs">
-                      {h.planLabel(plan)}
-                      {edit && !c.gradAt ? (
+                    <td className="truncate border border-line px-1.5 text-xs" title={ex ?? undefined}>
+                      {ex ? (
+                        <>
+                          🚫 {ex}
+                          {edit ? (
+                            <button type="button" className="btn ml-1 px-1 py-0 text-[11px]" onClick={() => open({ kind: "exempt", studentId: st.id })}>
+                              ✏️
+                            </button>
+                          ) : null}
+                        </>
+                      ) : null}
+                      {ex ? null : h.planLabel(plan)}
+                      {edit && !c.gradAt && !ex ? (
                         <button type="button" className="btn ml-1 px-1 py-0 text-[11px]" onClick={() => open({ kind: "plan", studentId: st.id })}>
                           ✏️
                         </button>
@@ -734,7 +773,7 @@ function ClassView({
                           {!sl.days.includes(d) ? <span className="text-xs text-muted">없음</span> : list.length === 0 ? <span className="text-xs text-muted">—</span> : null}
                           {list.map((a) => {
                             const st = h.student(a.studentId);
-                            const f = st ? h.tl(st, month).cur : null;
+                            const f = st && !st.exempt ? h.tl(st, month).cur : null;
                             return (
                               <span key={a.studentId} className="inline-flex items-center">
                               <button
@@ -854,6 +893,75 @@ function PlanModal({ data, h, studentId, act, onClose }: { data: HomeworkData; h
       <p className="mt-2 text-xs text-muted">
         어느 방법이든 <b>성공 판정은 SR 숙제검사</b>예요. 인증 문제(인증 후 SR 미흡 · 미인증) 1회 = 경고, 2회부터 그 달은 인증 요일도 숙제반 참석.
       </p>
+    </Modal>
+  );
+}
+
+/** 🚫 강제 숙제반 면제 — 카운트는 그대로, 강제 숙제반이 되어도 명단에만 「면제」 (인증 · 참석 · SR 자리 · 알림 없음) */
+function ExemptModal({ data, studentId, onClose, onSaved }: { data: HomeworkData; studentId?: number; onClose: () => void; onSaved: (msg: string) => void }) {
+  const list = data.students.filter((x) => x.exempt);
+  const first = studentId ? data.students.find((x) => x.id === studentId) : undefined;
+  const [pick, setPick] = useState<ComboValue>({ id: first?.id ?? null, name: first?.name ?? "" });
+  const cur = data.students.find((x) => x.id === pick.id);
+  const [note, setNote] = useState(first?.exempt ?? "");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const save = async (id: number, on: boolean, memo: string | null) => {
+    setErr(null);
+    setBusy(true);
+    try {
+      await apiPost("/api/homework", { action: "EXEMPT", studentId: id, on, note: memo });
+      const name = data.students.find((x) => x.id === id)?.name ?? "";
+      onSaved(on ? `🚫 ${name} 강제 숙제반 면제 — ${memo}` : `${name} 면제 풀기 — 카운트 2면 다시 강제 숙제반`);
+    } catch (e) {
+      setErr(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      open
+      width={600}
+      title="🚫 강제 숙제반 면제"
+      subtitle="숙제 카운트는 그대로 세요. 강제 숙제반이 되면 명단에만 「면제」로 보이고 인증 · 숙제반 참석 · SR 자리 · 알림은 없어요."
+      onClose={onClose}
+      footer={
+        <button type="button" className="btn" onClick={onClose}>
+          닫기
+        </button>
+      }
+    >
+      <div className="flex items-center gap-2">
+        <div className="w-44">
+          <Combobox
+            options={data.students.filter((x) => x.regular).map((x) => ({ id: x.id, label: x.name, hint: x.regular?.name }))}
+            value={pick}
+            onChange={(v) => {
+              setPick(v);
+              setNote(data.students.find((x) => x.id === v.id)?.exempt ?? "");
+            }}
+            placeholder="학생 이름"
+          />
+        </div>
+        <input className="field flex-1" value={note} onChange={(e) => setNote(e.target.value)} placeholder="사유 (예: 어머니 요청 · 월수 추가공부)" maxLength={60} />
+        <button type="button" className="btn btn-primary" disabled={busy || !cur} onClick={() => cur && void save(cur.id, true, note)}>
+          {cur?.exempt ? "고치기" : "면제"}
+        </button>
+      </div>
+      {err ? <div className="mt-2 rounded-lg bg-alert-soft px-3 py-2 text-sm font-semibold text-alert">{err}</div> : null}
+      <div className="mt-3 text-sm font-bold text-navy-800">면제 학생 {list.length}명</div>
+      {list.length === 0 ? <p className="mt-1 text-sm text-muted">없어요.</p> : null}
+      {list.map((x) => (
+        <div key={x.id} className="mt-1.5 flex items-center justify-between rounded-lg border border-line px-3 py-1.5 text-sm">
+          <span>
+            <b>{x.name}</b> <span className="text-muted">{x.regular?.name}</span> · {x.exempt}
+          </span>
+          <button type="button" className="btn px-2 py-0.5 text-xs" disabled={busy} onClick={() => void save(x.id, false, null)}>
+            면제 풀기
+          </button>
+        </div>
+      ))}
     </Modal>
   );
 }

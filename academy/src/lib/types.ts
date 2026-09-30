@@ -400,4 +400,8 @@ export type StaffUser = {
   active: 0 | 1;
   partTime: boolean;
   workDays: number[];
+  /** 학원앱을 지금 켜 두었나 (30초 안에 폴링) · 마지막으로 켜 둔 시각(ISO) · 그 컴퓨터 윈도우 알림 상태 */
+  online: boolean;
+  seenAt: string | null;
+  notifyState: "granted" | "default" | "denied" | "none" | null;
 };

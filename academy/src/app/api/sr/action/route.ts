@@ -1,6 +1,6 @@
 import { readJson, withUser } from "@/lib/api";
 import { assert } from "@/lib/errors";
-import { srAddAdhoc, srAdhocAnswer, srAdhocCancel, srAdhocPurge, srAdhocRequest, srAnswer, srConfirmNext, srDeleteAdhoc, srMission, srMissionCheck, srMove, srMoveClass, srNextMove, srNextMoveClass, srPack, srRequest, srToggleLeave } from "@/lib/repo";
+import { srAddAdhoc, srAdhocAnswer, srAdhocCancel, srAdhocPurge, srAdhocRequest, srAnswer, srConfirmNext, srDeleteAdhoc, srMission, srMissionCheck, srMove, srMoveClass, srNextMove, srNextMoveClass, srPack, srRequest, srSetEarly, srToggleLeave } from "@/lib/repo";
 
 type Body =
   /** ↔ 자리 바꾸기 (데스크·관리자) */
@@ -32,7 +32,9 @@ type Body =
   | { action: "CONFIRM_NEXT"; undo?: boolean }
   /** 📅 다음 달 자리 고치기 — 학생 옮기기·맞바꾸기 / 반 통째로 (데스크·관리자, 고치면 확정) */
   | { action: "NEXT_MOVE"; classId: number; studentId: number; seat: string }
-  | { action: "NEXT_MOVE_CLASS"; classId: number; col: string };
+  | { action: "NEXT_MOVE_CLASS"; classId: number; col: string }
+  /** 📌 일찍 오기 — 그 요일 start 부터 SR 끝까지 같은 자리 (null = 없앰, 데스크·관리자) */
+  | { action: "EARLY"; classId: number; studentId: number; day: number; start: number | null };
 
 export const POST = withUser(async ({ user, req }) => {
   const b = await readJson<Body>(req);
@@ -85,6 +87,8 @@ export const POST = withUser(async ({ user, req }) => {
     case "NEXT_MOVE_CLASS":
       srNextMoveClass(user, b.classId, b.col);
       break;
+    case "EARLY":
+      return srSetEarly(user, b.classId, b.studentId, b.day, b.start ?? null);
     case "MOVE_CLASS":
       srMoveClass(user, b.classId, b.col);
       break;

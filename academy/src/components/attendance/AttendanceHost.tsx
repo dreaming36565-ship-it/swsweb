@@ -4,6 +4,7 @@
 // 팝업은 ① 출석체크, ② 출결전화, 📄 미션지 요청(선생님), 🙋 SR 자리 요청(데스크) — 모두 "나중에" 가 없다. 끝까지 처리해야 사라진다.
 // 출결 팝업 두 개는 「접기」로 잠깐 내려 둘 수 있다 — 위쪽 띠가 처리할 때까지 깜박인다.
 // 출결 결과(지각·결석)는 팝업 없이 담당 선생님·관리자 알림함으로만 간다.
+// 학원앱을 안 보고 있으면(다른 창 · 내려 둠) 윈도우 알림창(오른쪽 아래 작게) + 탭 제목 깜박임 — 소리를 꺼 둬도 알 수 있게.
 
 import { useCallback, useEffect, useState } from "react";
 import CheckPopup from "./CheckPopup";
@@ -11,6 +12,9 @@ import CallPopup from "./CallPopup";
 import MissionPopup from "./MissionPopup";
 import AdhocRequestPopup from "../sr/AdhocRequestPopup";
 import { apiGet } from "@/lib/http";
+import { notifyState } from "@/lib/desktopNotify";
+import { fmtTime } from "@/lib/time";
+import { useDesktopAlert } from "../useDesktopAlert";
 import type { AttendanceGroup, MissionRequest, SessionUser } from "@/lib/types";
 import type { SrAdhocRequest } from "@/lib/repo/sr";
 
@@ -26,7 +30,7 @@ export default function AttendanceHost({ user }: { user: SessionUser }) {
 
   const load = useCallback(async () => {
     try {
-      const data = await apiGet<Payload>("/api/attendance/pending");
+      const data = await apiGet<Payload>(`/api/attendance/pending?n=${notifyState()}`);
       setGroups(data.groups);
       setMissions(data.missions ?? []);
       setAdhocs(data.adhocs ?? []);
@@ -42,6 +46,26 @@ export default function AttendanceHost({ user }: { user: SessionUser }) {
   }, [load]);
 
   const current = groups[0];
+  // 윈도우 알림창에 보일 말 — 지금 떠 있는 팝업 하나
+  const m0 = missions[0];
+  const a0 = adhocs[0];
+  const alert = current
+    ? {
+        key: current.key,
+        title: current.kind === "CHECK" ? "🔔 출석체크해주세요." : "📞 출결전화 돌려주세요.",
+        body: `${fmtTime(current.triggerMin)} · ${current.events.map((e) => e.className).join(", ")} — 누르면 바로 열려요`,
+        short: current.kind === "CHECK" ? "출석체크!" : "출결전화!",
+      }
+    : m0
+      ? { key: `mission-${m0.classId}-${m0.date}`, title: "📄 미션지 요청", body: `${m0.className} — 누르면 바로 열려요`, short: "미션지!" }
+      : a0
+        ? { key: `adhoc-${a0.id}`, title: "🙋 SR 자리 요청", body: `${a0.name} · ${fmtTime(a0.start)} — 누르면 바로 열려요`, short: "SR 자리 요청!" }
+        : null;
+  useDesktopAlert(alert, () => {
+    // 알림창을 누르면 접어 둔 팝업도 연다
+    if (current) setFolded((m) => ({ ...m, [current.key]: false }));
+  });
+
   if (!current) {
     const m = missions[0];
     if (!m) {

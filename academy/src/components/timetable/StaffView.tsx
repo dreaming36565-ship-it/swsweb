@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useConfirm } from "../ConfirmDialog";
 import { IconChevronLeft, IconChevronRight, IconTrash } from "../Icons";
 import { apiDelete, apiGet, apiPatch, apiPost, errorMessage } from "@/lib/http";
-import { DAY_LABELS } from "@/lib/time";
+import { DAY_LABELS, fmtTime } from "@/lib/time";
 import { ROLES, ROLE_LABEL, rolesLabel, type Role, type StaffUser } from "@/lib/types";
 
 /** 근무 요일 고르기 — 월~토 */
@@ -36,6 +36,9 @@ export default function StaffView({ ctx }: { ctx: Ctx }) {
   }, []);
   useEffect(() => {
     void loadUsers();
+    // 「켜져 있음 / 꺼져 있음」이 바뀌니 30초마다 다시
+    const t = setInterval(() => void loadUsers(), 30_000);
+    return () => clearInterval(t);
   }, [loadUsers]);
 
   const run = async (fn: () => Promise<unknown>, ok?: string) => {
@@ -71,6 +74,7 @@ export default function StaffView({ ctx }: { ctx: Ctx }) {
           <thead>
             <tr className="bg-navy-50 text-left text-xs text-muted">
               <th className="px-2.5 py-2">이름</th>
+              <th className="px-2.5 py-2" title="지금 학원앱을 켜 두었나 · 그 컴퓨터 윈도우 알림">학원앱</th>
               {ROLES.map((r) => (
                 <th key={r} className="px-2.5 py-2 text-center">
                   {ROLE_LABEL[r]}
@@ -105,6 +109,9 @@ export default function StaffView({ ctx }: { ctx: Ctx }) {
                       </button>
                     )}
                     {u.id === ctx.user.id ? <span className="ml-1 text-xs text-muted">(나)</span> : null}
+                  </td>
+                  <td className="whitespace-nowrap px-2.5 py-2 text-xs">
+                    <AppState u={u} />
                   </td>
                   {ROLES.map((r) => (
                     <td key={r} className="px-2.5 py-2 text-center">
@@ -291,5 +298,31 @@ export default function StaffView({ ctx }: { ctx: Ctx }) {
         </div>
       </section>
     </div>
+  );
+}
+
+/** 학원앱 켜짐 · 윈도우 알림 — 수업 전에 누가 앱을 안 켰는지 */
+function AppState({ u }: { u: StaffUser }) {
+  const last = u.seenAt ? new Date(u.seenAt) : null;
+  const when = last
+    ? last.toDateString() === new Date().toDateString()
+      ? fmtTime(last.getHours() * 60 + last.getMinutes())
+      : `${last.getMonth() + 1}/${last.getDate()}`
+    : null;
+  return (
+    <span className="inline-flex items-center gap-1">
+      {u.online ? (
+        <span className="rounded-md bg-ok-soft px-1.5 py-0.5 font-bold text-ok">켜져 있음</span>
+      ) : (
+        <span className="rounded-md bg-alert-soft px-1.5 py-0.5 font-bold text-alert" title="마지막으로 켜 둔 때">
+          꺼져 있음{when ? ` · ${when}` : ""}
+        </span>
+      )}
+      {u.notifyState && u.notifyState !== "granted" ? (
+        <span className="rounded-md bg-late-soft px-1.5 py-0.5 font-bold text-late" title="그 컴퓨터에서 윈도우 알림을 켜지 않았어요">
+          🔕 알림 안 켬
+        </span>
+      ) : null}
+    </span>
   );
 }

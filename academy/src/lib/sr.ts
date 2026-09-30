@@ -72,7 +72,18 @@ export type PlanInput = {
   partners?: Map<number, number>;
   /** 반id|학생id → 그 학생이 SR에 오는 요일 (숙제반처럼 반의 SR 요일과 다를 때) */
   memberDays?: Map<string, number[]>;
+  /** 📌 일찍 오기 — "반id|학생id|요일" → 시작 시각. 그 요일은 이 시각부터 SR 끝까지 같은 자리 */
+  early?: Map<string, number>;
 };
+
+/** 📌 일찍 오기를 반영한 그 학생의 SR 칸 — 시작만 앞당긴다 */
+export function withEarly(blocks: SrBlock[], studentId: number, early?: Map<string, number>): SrBlock[] {
+  if (!early?.size) return blocks;
+  return blocks.map((b) => {
+    const e = early.get(`${b.classId}|${studentId}|${b.day}`);
+    return e !== undefined && e < b.start ? { ...b, start: e } : b;
+  });
+}
 
 export type PlanResult = {
   seats: Map<SeatKey, { classId: number; studentId: number; seat: string; manual: boolean }>;
@@ -97,7 +108,7 @@ export function planSeats(input: PlanInput): PlanResult {
   const blocksOf = (classId: number, studentId: number) => {
     const days = input.memberDays?.get(seatKey(classId, studentId));
     const all = blocksBy.get(classId) ?? [];
-    return days ? all.filter((b) => days.includes(b.day)) : all;
+    return withEarly(days ? all.filter((b) => days.includes(b.day)) : all, studentId, input.early);
   };
   const seats: PlanResult["seats"] = new Map();
   /** 그 자리를 이미 쓰는가 — blocks 시간에 그 자리에 앉은 사람이 있으면 */
@@ -281,7 +292,9 @@ export function classMoveOptions(uses: SeatUse[], blocksOf: (classId: number) =>
   const mine = uses.filter((u) => u.classId === classId);
   const myCols = [...new Set(mine.map((u) => seatCol(u.seat)))];
   const myCount = new Set(mine.map((u) => u.key)).size;
-  const myBlocks = blocksOf(classId);
+  // 학생마다 실제로 앉는 시간(📌 일찍 오기 포함)도 함께 본다
+  const spans = (id: number) => uses.filter((u) => u.classId === id).map((u) => ({ classId: id, day: u.day, start: u.start, end: u.end }));
+  const myBlocks = [...blocksOf(classId), ...spans(classId)];
   for (const col of SEAT_COLS) {
     if (myCols.length === 1 && myCols[0] === col) {
       out.set(col, { kind: "self" });
@@ -309,7 +322,7 @@ export function classMoveOptions(uses: SeatUse[], blocksOf: (classId: number) =>
       continue;
     }
     // 그 반이 우리 열로 와도 되는가 — 그 반 시간에 우리 열을 쓰는 다른 사람(우리 반 빼고)이 없어야
-    const theirBlocks = blocksOf(other);
+    const theirBlocks = [...blocksOf(other), ...spans(other)];
     const clash = uses.find((u) => seatCol(u.seat) === myCols[0] && u.classId !== classId && u.classId !== other && blockOverlap(theirBlocks, u));
     out.set(col, clash ? { kind: "no", reason: `맞바꾸면 ${label}이(가) ${clash.label}과(와) 겹쳐요` } : { kind: "swap", classId: other, label });
   }

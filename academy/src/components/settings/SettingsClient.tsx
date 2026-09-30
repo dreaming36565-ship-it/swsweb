@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { IconVolume } from "../Icons";
 import BackupSection from "./BackupSection";
+import NotifySection from "./NotifySection";
 import PurgeSection from "./PurgeSection";
 import { can } from "@/lib/perm";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
@@ -145,6 +146,8 @@ export default function SettingsClient({ user }: { user: SessionUser }) {
             </button>
           </div>
         </section>
+
+        <NotifySection />
 
         {isAdmin ? (
           <section className="card p-5 xl:col-span-3">

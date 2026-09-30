@@ -4,7 +4,7 @@
 import { getDb } from "../db";
 import { AppError, assert } from "../errors";
 import { can } from "../perm";
-import { checkDatesOf, forcedPlans, homeworkSlots, homeworkStudents, marksOf, type HwStudent } from "../seed";
+import { checkDatesOf, forcedPlans, homeworkSlots, homeworkStudents, hwExempts, marksOf, type HwStudent } from "../seed";
 import { certUnchecked, clashOn, isMark, md, parseApplyText, quarterOf, timeline, type HwPlan, type HwSlot, type Mark } from "../homework";
 import { SEATS, seatBlocker } from "../sr";
 import { monthDayWeek, rangeLabel } from "../time";
@@ -16,7 +16,8 @@ import { srSnapshot } from "./sr";
 
 export type HomeworkData = {
   today: string;
-  students: (HwStudent & { teacherName: string | null; textbook: string | null })[];
+  /** exempt = 강제 숙제반 면제 사유 (면제가 아니면 null) */
+  students: (HwStudent & { teacherName: string | null; textbook: string | null; exempt: string | null })[];
   /** 정규반 (숙제검사 표 묶음) */
   classes: { id: number; name: string; group: "월수" | "화목"; grade: string | null; textbook: string | null; teacherId: number | null; teacherName: string | null }[];
   marks: { studentId: number; date: string; mark: Mark }[];
@@ -58,11 +59,12 @@ export function homeworkData(): HomeworkData {
     const c = classInfo.find((x) => x.id === id)!;
     return { id, name: c.name, group, grade: c.grade, textbook: c.textbook, teacherId: c.teacher_id, teacherName: c.teacher_name };
   });
+  const exempt = hwExempts(db);
   return {
     today: today(),
     students: all.map((s) => {
       const c = s.regular ? classInfo.find((x) => x.id === s.regular!.id) : null;
-      return { ...s, teacherName: c?.teacher_name ?? null, textbook: c?.textbook ?? null };
+      return { ...s, teacherName: c?.teacher_name ?? null, textbook: c?.textbook ?? null, exempt: exempt.get(s.id) ?? null };
     }),
     classes,
     marks: rows<{ studentId: number; date: string; mark: string }>(db.prepare("SELECT student_id AS studentId, date, mark FROM hw_marks").all()).filter(
@@ -109,7 +111,8 @@ export function setMark(user: SessionUser, studentId: number, date: string, mark
   const started = !before.cur && !!after.cur;
   const graduated = !!before.cur && !after.cur && !!after.cycles.at(-1)?.gradAt;
   if (started || graduated) refreshSr();
-  if (started) {
+  // 강제 숙제반 면제 학생은 명단에만 「면제」로 — 알림 없음
+  if (started && !hwExempts(db).has(studentId)) {
     // 담당T 알림 (정규반 담당) + 숙제반 관리하는 데스크
     const targets = new Set<number>([...(st.regular?.teacherId ? [st.regular.teacherId] : []), ...userIdsWithRole("DESK")]);
     for (const id of targets) {
@@ -150,6 +153,16 @@ export function savePlan(user: SessionUser, studentId: number, plan: HwPlan): vo
       } else ins.run(studentId, Number(d), "CERT", null);
     }
   });
+  refreshSr();
+}
+
+/** 🚫 강제 숙제반 면제 (예: 어머니 요청) — 카운트는 그대로 세고, 강제 숙제반이 되어도 인증 · 참석 · SR 자리 · 알림 없음 */
+export function setExempt(user: SessionUser, studentId: number, on: boolean, note: string | null): void {
+  assert(can(user, "homework.class"), "숙제반 관리 권한이 없어요.");
+  const st = studentOf(studentId);
+  const memo = note?.trim() || null;
+  if (on) assert(memo, "면제 사유를 적어 주세요. (예: 어머니 요청)");
+  getDb().prepare("UPDATE students SET hw_exempt = ?, hw_exempt_note = ? WHERE id = ?").run(on ? 1 : 0, on ? memo : null, st.id);
   refreshSr();
 }
 

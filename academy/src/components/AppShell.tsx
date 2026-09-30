@@ -8,6 +8,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import BrandLogo from "./BrandLogo";
 import NotificationBell from "./NotificationBell";
+import NotifyBanner from "./NotifyBanner";
 import { ConfirmProvider } from "./ConfirmDialog";
 import AttendanceHost from "./attendance/AttendanceHost";
 import {
@@ -116,6 +117,7 @@ export default function AppShell({ user, children }: { user: SessionUser; childr
             </div>
           </header>
 
+          <NotifyBanner user={user} />
           <main className="min-h-0 flex-1 overflow-auto bg-canvas p-6">{children}</main>
         </div>
       </div>

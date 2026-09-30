@@ -7,7 +7,11 @@ import ResultTable from "./attendance/ResultTable";
 import { TrashButton, usePurge } from "./Purge";
 import { can } from "@/lib/perm";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
+import { showDesktop } from "@/lib/desktopNotify";
 import type { AttendanceEvent, Notification, SessionUser } from "@/lib/types";
+
+/** 알림함에 오면 윈도우 알림창도 띄우는 알림 — ⏰ 선생님 출석체크 5분 넘게 안 됨(데스크) */
+const DESKTOP_KINDS = ["ATTENDANCE_LATE_CHECK"];
 
 type Payload = { items: Notification[]; unread: number };
 
@@ -37,9 +41,18 @@ export default function NotificationBell({ user }: { user: SessionUser }) {
   const [purgeError, setPurgeError] = useState<string | null>(null);
   const purging = useRef(false);
 
+  /** 이미 본(또는 처음 불러올 때 있던) 알림 — 새로 온 것만 알림창으로 */
+  const known = useRef<Set<number> | null>(null);
   const load = useCallback(async () => {
     try {
       const data = await apiGet<Payload>("/api/notifications");
+      if (known.current) {
+        for (const n of data.items) {
+          if (known.current.has(n.id) || n.readAt || !DESKTOP_KINDS.includes(n.kind)) continue;
+          showDesktop({ tag: `noti-${n.id}`, title: n.title, body: n.body ?? "", onClick: () => setOpen(true) });
+        }
+      }
+      known.current = new Set(data.items.map((n) => n.id));
       setItems(data.items);
       setUnread(data.unread);
     } catch {

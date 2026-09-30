@@ -157,6 +157,38 @@ export function tickAttendance(date: string, dayOfWeek: number, now: number): vo
     if (o) opened.push(o);
   }
   notifyOpened(opened);
+  warnLateChecks(date);
+}
+
+/** 선생님 출석체크가 이 시간(분) 넘게 안 되면 데스크에 알린다 */
+export const LATE_CHECK_MIN = 5;
+
+/**
+ * ⏰ 선생님 출석체크 팝업이 뜬(출결이 열린) 뒤 5분 넘게 안 되면 데스크 전원에게 한 번 알림 — 데스크가 선생님께 알려 드린다.
+ * 알파가 먼저인 반(데스크가 출석체크)은 해당 없음.
+ */
+function warnLateChecks(date: string): void {
+  const db = getDb();
+  const late = rows<EventHead>(
+    db
+      .prepare(
+        `${ATT_EVENT_SELECT} WHERE e.date = ? AND e.stage = 'CHECK' AND e.checker = 'TEACHER' AND e.late_warned = 0 AND e.created_at <= ?
+          ORDER BY e.trigger_min, c.name`,
+      )
+      .all(date, new Date(Date.now() - LATE_CHECK_MIN * 60_000).toISOString()),
+  );
+  if (late.length === 0) return;
+  const mark = db.prepare("UPDATE attendance_events SET late_warned = 1 WHERE id = ?");
+  for (const e of late) mark.run(e.id);
+  const desk = userIdsWithRole("DESK");
+  // 같은 선생님 · 같은 시각은 한 건으로
+  const groups = new Map<string, EventHead[]>();
+  for (const e of late) groups.set(`${e.teacherId}-${e.triggerMin}`, [...(groups.get(`${e.teacherId}-${e.triggerMin}`) ?? []), e]);
+  for (const g of groups.values()) {
+    const t = g[0].teacherName ? `${g[0].teacherName}T` : "담당T 없음";
+    const body = `${g.map((e) => e.className).join(", ")} · ${t} · 팝업 뜬 지 ${LATE_CHECK_MIN}분 넘게 안 됨 — 선생님께 알려 주세요`;
+    for (const id of desk) notify(id, "ATTENDANCE_LATE_CHECK", "⏰ 출석체크 안 됨", body, "/attendance");
+  }
 }
 
 /** 결석관리의 "지금 열기" — 시작 +2분을 기다리지 않고 즉시 시작. 같은 시각 반들을 한 번에 연다. */

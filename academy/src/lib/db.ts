@@ -53,7 +53,10 @@ CREATE TABLE IF NOT EXISTS users (
   must_change_pw INTEGER NOT NULL DEFAULT 0,
   -- 근무: FULL 정직원 / PART 알바. 알바는 work_days("1,3,5") 요일의 시간표 · SR만 본다
   employment TEXT NOT NULL DEFAULT 'FULL',
-  work_days TEXT NOT NULL DEFAULT ''
+  work_days TEXT NOT NULL DEFAULT '',
+  -- 마지막으로 앱을 켜 둔 시각(4초 폴링) · 그 컴퓨터 윈도우 알림 상태(granted/default/denied/none)
+  seen_at TEXT,
+  notify_state TEXT
 );
 
 CREATE TABLE IF NOT EXISTS rooms (
@@ -86,7 +89,19 @@ CREATE TABLE IF NOT EXISTS students (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   department TEXT NOT NULL,
-  active INTEGER NOT NULL DEFAULT 1
+  active INTEGER NOT NULL DEFAULT 1,
+  -- 강제 숙제반 면제 (예: 어머니 요청) — 카운트는 세지만 인증 · 참석 · 알림 없음. hw_exempt_note = 사유
+  hw_exempt INTEGER NOT NULL DEFAULT 0,
+  hw_exempt_note TEXT
+);
+
+-- 📌 SR 일찍 오기 — 그 반 SR 전에 일찍 와서(start_min) SR 끝까지 같은 자리. 요일마다
+CREATE TABLE IF NOT EXISTS sr_early (
+  class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  day INTEGER NOT NULL,
+  start_min INTEGER NOT NULL,
+  PRIMARY KEY (class_id, student_id, day)
 );
 
 -- 학생 ↔ 반 (다대다). 한 학생이 정규반 + 개별반을 함께 다닌다.
@@ -255,6 +270,8 @@ CREATE TABLE IF NOT EXISTS attendance_events (
   checker TEXT NOT NULL,
   trigger_min INTEGER NOT NULL,
   stage TEXT NOT NULL,
+  -- 선생님 출석체크가 5분 넘게 안 되어 데스크에 알렸음
+  late_warned INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   UNIQUE(session_id, date)
@@ -509,6 +526,14 @@ const MIGRATIONS: ((db: DatabaseSync) => void)[] = [
   // 6: 🙋 SR 자리 요청 (선생님 → 데스크 팝업 → 임시 자리) (2026-09-30)
   (db) => {
     db.exec(ADHOC_REQUESTS_SQL);
+  },
+  // 7: 윈도우 알림 · 앱 켜짐 표시 · 출석체크 5분 지연 알림 · 강제 숙제반 면제 · 📌 SR 일찍 오기(테이블은 SCHEMA) (2026-09-30)
+  (db) => {
+    ensureColumn(db, "users", "seen_at", "TEXT");
+    ensureColumn(db, "users", "notify_state", "TEXT");
+    ensureColumn(db, "attendance_events", "late_warned", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn(db, "students", "hw_exempt", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn(db, "students", "hw_exempt_note", "TEXT");
   },
 ];
 
