@@ -8,7 +8,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { dateKey, toMin } from "./time";
-import { gradeLevel, planSeats, type Level, type SrBlock } from "./sr";
+import { gradeLevel, planSeats, srRulesFor, type Level, type SrBlock } from "./sr";
 import { defaultPlan, isMark, quarterOf, timeline, type HwPlan, type HwSlot, type Mark } from "./homework";
 
 /** 한 요일 묶음의 수업 시간. sr 이 있으면 그 시간에 SR룸을 쓴다. */
@@ -388,7 +388,7 @@ export function srRoster(
   db: DatabaseSync,
   today = dateKey(new Date()),
 ): {
-  classes: { id: number; name: string; level: Level; members: number[] }[];
+  classes: { id: number; name: string; level: Level; members: number[]; grade: string | null }[];
   blocks: (SrBlock & { sessionId: number })[];
   memberDays: Map<string, number[]>;
   /** 🔗 합반 짝 (반id → 짝 반id) */
@@ -460,7 +460,7 @@ export function srRoster(
   return {
     classes: classRows
       .filter((c) => srClassIds.has(c.id))
-      .map((c) => ({ id: c.id, name: c.name, level: levelOf(c.id), members: members.get(c.id) ?? [] })),
+      .map((c) => ({ id: c.id, name: c.name, level: levelOf(c.id), members: members.get(c.id) ?? [], grade: c.grade })),
     blocks,
     memberDays,
     partners,
@@ -471,8 +471,18 @@ export function srRoster(
  * SR 주간 자리를 다시 계산한다. 지금 자리는 그대로 두고 자리가 없는 학생만 앉힌다
  * (시간이 겹치게 됐거나 반에서 빠진 학생의 자리는 버린다). pack = 월초 정리.
  */
-export function rebuildSrSeats(db: DatabaseSync, opts: { pack?: boolean } = {}): { overflow: number } {
-  const { classes, blocks, partners } = srRoster(db);
+export type SrPlanOpts = {
+  pack?: boolean;
+  /** 처음부터 다시 앉히기 (사람이 옮긴 자리까지 초기화) */
+  fresh?: boolean;
+  /** 이 날짜의 명단(숙제반 신청 달)과 규칙으로 — 기본 오늘 */
+  date?: string;
+};
+
+/** 자리 계산만 (저장 안 함) — 미리보기 · 바뀌는 학생 보기 */
+export function planSrSeats(db: DatabaseSync, opts: SrPlanOpts = {}) {
+  const date = opts.date ?? dateKey(new Date());
+  const { classes, blocks, partners } = srRoster(db, date);
   const existing = (
     q(db, "SELECT class_id, student_id, seat, manual FROM sr_seats").all() as {
       class_id: number;
@@ -481,7 +491,11 @@ export function rebuildSrSeats(db: DatabaseSync, opts: { pack?: boolean } = {}):
       manual: number;
     }[]
   ).map((e) => ({ classId: e.class_id, studentId: e.student_id, seat: e.seat, manual: e.manual === 1 }));
-  const plan = planSeats({ classes, blocks, existing, pack: opts.pack, partners });
+  return planSeats({ classes, blocks, existing, pack: opts.pack, fresh: opts.fresh, partners, rules: srRulesFor(date.slice(0, 7)) });
+}
+
+export function rebuildSrSeats(db: DatabaseSync, opts: SrPlanOpts = {}): { overflow: number } {
+  const plan = planSrSeats(db, opts);
   db.exec("DELETE FROM sr_seats");
   const ins = db.prepare("INSERT INTO sr_seats (class_id, student_id, seat, manual) VALUES (?, ?, ?, ?)");
   for (const s of plan.seats.values()) ins.run(s.classId, s.studentId, s.seat, s.manual ? 1 : 0);

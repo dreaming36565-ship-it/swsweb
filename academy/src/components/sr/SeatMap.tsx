@@ -7,7 +7,7 @@ import { SEAT_COLS, SEAT_ROWS, type SeatUse } from "@/lib/sr";
 import { clockLabel, rangeLabel } from "@/lib/time";
 import type { ClassColor } from "@/lib/colors";
 
-export type SeatMark = { tone: "pick" | "self" | "block"; onClick?: () => void; title?: string; content: ReactNode };
+export type SeatMark = { tone: "pick" | "swap" | "self" | "block"; onClick?: () => void; title?: string; content: ReactNode };
 
 export default function SeatMap({
   occ,
@@ -40,7 +40,9 @@ export default function SeatMap({
                 const tone =
                   m.tone === "pick"
                     ? "border-2 border-srpink bg-srpink-soft text-srpink cursor-pointer"
-                    : m.tone === "self"
+                    : m.tone === "swap"
+                      ? "border-2 border-late bg-late-soft text-late cursor-pointer"
+                      : m.tone === "self"
                       ? "border-navy-900 bg-navy-800 text-white"
                       : "border-line bg-navy-50 text-navy-300";
                 return (

@@ -3,8 +3,8 @@
 import { getDb } from "../db";
 import { parseDays, parseRoles } from "../auth";
 import { assert } from "../errors";
-import { rebuildSrSeats, srRoster } from "../seed";
-import { SEATS, movableSeatsFor, seatBlocker, type Level, type SeatUse, type SrBlock } from "../sr";
+import { planSrSeats, rebuildSrSeats, srRoster } from "../seed";
+import { SEATS, SEAT_ROWS, classMoveOptions, movableSeatsFor, seatBlocker, seatCol, seatRow, srRulesFor, type Level, type SeatUse, type SrBlock } from "../sr";
 import { DAY_LABELS, addDaysKey, clockLabel, fmtTime, parseDateKey, rangeLabel } from "../time";
 import { teacherLabel, type MissionRequest, type SessionType, type SessionUser } from "../types";
 import { can } from "../perm";
@@ -97,13 +97,15 @@ export type SrSnapshot = {
   overflow: { classId: number; studentId: number }[];
   /** 요일마다 수업이 있는 모든 반 — 반 색을 시간표와 똑같이 맞추려고 */
   dayClassIds: Record<number, number[]>;
+  /** 📅 다음 달 자리 미리보기일 때 — 저장 안 한 계산 결과 */
+  preview?: { month: string; changed: number };
 };
 
 const dayOf = (date: string) => parseDateKey(date).getDay();
 
-function srClasses(): { list: SrClass[]; memberDays: Map<string, number[]>; blocks: SrBlock[] } {
+function srClasses(rosterDate = today()): { list: SrClass[]; memberDays: Map<string, number[]>; blocks: SrBlock[] } {
   const db = getDb();
-  const roster = srRoster(db, today());
+  const roster = srRoster(db, rosterDate);
   const info = rows<{ id: number; type: string | null; teacher_id: number | null; teacher_name: string | null }>(
     db
       .prepare(
@@ -158,7 +160,41 @@ function usesFrom(
   return out;
 }
 
-export function srSnapshot(date: string): SrSnapshot {
+/** 다음 달 1일 (YYYY-MM-01) */
+export function nextMonthFirst(): string {
+  const d = parseDateKey(today());
+  const n = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-01`;
+}
+
+/** 계산한 자리를 화면용 목록으로 */
+const planRows = (plan: ReturnType<typeof planSrSeats>) => [...plan.seats.values()].map((x) => ({ ...x }));
+
+/**
+ * 📅 다음 달 자리 미리보기 — 지금 명단(다음 달 숙제반 신청 포함) · 다음 달 규칙으로 처음부터 앉혀 본 모습. 저장 안 함.
+ * date 는 보고 싶은 요일을 고르는 데만 쓴다 (임시 자리 · 하원 · 결석은 없음).
+ */
+function srPreviewSnapshot(date: string): SrSnapshot {
+  const first = nextMonthFirst();
+  const day = dayOf(date);
+  const { list: classes, memberDays, blocks } = srClasses(first);
+  const plan = planSrSeats(getDb(), { fresh: true, date: first });
+  const seats = planRows(plan);
+  const weekly = new Map(seats.map((x) => [`${x.classId}|${x.studentId}`, x.seat]));
+  const weekUses = usesFrom(classes, blocks, (c, st) => weekly.get(`${c}|${st}`) ?? null, memberDays);
+  const now = new Map(seatRows().map((x) => [`${x.classId}|${x.studentId}`, x.seat]));
+  const changed = new Set(seats.filter((x) => now.get(`${x.classId}|${x.studentId}`) !== x.seat).map((x) => x.studentId)).size;
+  const dayClassIds: Record<number, number[]> = {};
+  for (const x of listAllSessions()) (dayClassIds[x.dayOfWeek] ??= []).push(x.classId);
+  return {
+    date, day, nowMin: nowMin(), classes, blocks, dayBlocks: blocks.filter((b) => b.day === day), seats, weekUses,
+    dayUses: weekUses.filter((u) => u.day === day), adhoc: [], leave: [], absent: [], missions: [], requests: [], adhocRequests: [], adhocRecent: [],
+    log: [], overflow: plan.overflow, dayClassIds, preview: { month: first.slice(0, 7), changed },
+  };
+}
+
+export function srSnapshot(date: string, opts: { preview?: boolean } = {}): SrSnapshot {
+  if (opts.preview) return srPreviewSnapshot(date);
   const db = getDb();
   const day = dayOf(date);
   const { list: classes, memberDays, blocks } = srClasses();
@@ -564,11 +600,64 @@ export function missionsForTeacher(user: SessionUser): MissionRequest[] {
 /* ------------------------------------------------------------------ 🧹 월초 정리 */
 
 /** 퇴원 등으로 생긴 빈자리를 없애고, 반마다 쓰던 열 안에서 앞자리부터 다시 채운다 (사람이 옮긴 자리는 그대로) */
-export function srPack(user: SessionUser | null): void {
-  if (user) assert(can(user, "sr.pack"), "월초 자리 정리는 관리자만 할 수 있어요.");
-  rebuildSrSeats(getDb(), { pack: true });
+/**
+ * 🧹 자리 정리 — PACK = 반마다 쓰던 열 안에서 앞으로 당기기 (사람이 옮긴 자리는 그대로)
+ *              RESET = 처음부터 다시 앉히기 (사람이 옮긴 자리까지 초기화)
+ * 매달 1일 자동: 새 규칙 달(2026-10~)부터는 RESET.
+ */
+export type SrPackMode = "PACK" | "RESET";
+
+export function srPack(user: SessionUser | null, mode: SrPackMode = "PACK"): void {
+  if (user) assert(can(user, "sr.pack"), "자리 정리는 관리자만 할 수 있어요.");
+  rebuildSrSeats(getDb(), mode === "RESET" ? { fresh: true } : { pack: true });
   setSetting("sr_packed_month", today().slice(0, 7));
-  addLog(today(), user ? `${who(user)} · 🧹 월초 자리 정리` : "🧹 월초 자리 정리 (매달 1일 자동)");
+  const what = mode === "RESET" ? "처음부터 다시 앉히기" : "앞으로 당기기";
+  addLog(today(), user ? `${who(user)} · 🧹 자리 정리 (${what})` : `🧹 월초 자리 정리 · ${what} (매달 1일 자동)`);
+}
+
+/** 🧹 누르기 전에 — 바뀌는 학생 */
+export function srPackDiff(user: SessionUser, mode: SrPackMode): { name: string; className: string; from: string | null; to: string | null }[] {
+  assert(can(user, "sr.pack"), "자리 정리는 관리자만 할 수 있어요.");
+  const plan = planSrSeats(getDb(), mode === "RESET" ? { fresh: true } : { pack: true });
+  const now = new Map(seatRows().map((x) => [`${x.classId}|${x.studentId}`, x.seat]));
+  const out: { name: string; className: string; from: string | null; to: string | null }[] = [];
+  for (const x of plan.seats.values()) {
+    const from = now.get(`${x.classId}|${x.studentId}`) ?? null;
+    if (from !== x.seat) out.push({ name: studentName(x.studentId), className: className(x.classId), from, to: x.seat });
+  }
+  for (const o of plan.overflow) out.push({ name: studentName(o.studentId), className: className(o.classId), from: now.get(`${o.classId}|${o.studentId}`) ?? null, to: null });
+  return out.sort((a, b) => a.className.localeCompare(b.className, "ko") || a.name.localeCompare(b.name, "ko"));
+}
+
+/**
+ * ↔ 반 통째로 옮기기 (데스크·관리자) — 빈 열로 옮기거나, 그 열에 앉은 반과 맞바꾼다.
+ * 주간 자리라 그 반이 SR을 쓰는 모든 요일에 적용. 앞자리 순서는 그대로.
+ */
+export function srMoveClass(user: SessionUser, classId: number, col: string): void {
+  assert(can(user, "sr.move"), "반 옮기기는 데스크·관리자만 할 수 있어요.");
+  const { list: classes, memberDays, blocks } = srClasses();
+  const seats = seatRows();
+  const weekly = new Map(seats.map((x) => [`${x.classId}|${x.studentId}`, x.seat]));
+  const uses = usesFrom(classes, blocks, (c, st) => weekly.get(`${c}|${st}`) ?? null, memberDays);
+  const opt = classMoveOptions(uses, (id) => blocks.filter((b) => b.classId === id), classId).get(col);
+  assert(opt, "없는 열입니다.");
+  assert(opt.kind !== "self", "지금 앉은 열이에요.");
+  if (opt.kind === "no") assert(false, `${col}열로 옮길 수 없어요 — ${opt.reason}`);
+  const db = getDb();
+  const set = db.prepare("UPDATE sr_seats SET seat = ?, manual = 1 WHERE class_id = ? AND student_id = ?");
+  const byRow = (id: number) => seats.filter((x) => x.classId === id).sort((a, b) => seatRow(a.seat) - seatRow(b.seat) || a.seat.localeCompare(b.seat));
+  const mine = byRow(classId);
+  const fromCol = seatCol(mine[0]?.seat ?? "A");
+  transaction(() => {
+    mine.forEach((x, i) => set.run(`${col}${i + 1}`, x.classId, x.studentId));
+    if (opt.kind === "swap") byRow(opt.classId).slice(0, SEAT_ROWS).forEach((x, i) => set.run(`${fromCol}${i + 1}`, x.classId, x.studentId));
+  });
+  addLog(
+    today(),
+    opt.kind === "swap"
+      ? `${who(user)} · ⇄ ${className(classId)} ${fromCol}열 ↔ ${opt.label} ${col}열 맞바꿈`
+      : `${who(user)} · ↔ ${className(classId)} → ${col}열`,
+  );
 }
 
 /** 매달 1일에 저절로 — 누군가 앱을 켜 두면 폴링 때 한 번 */
@@ -579,5 +668,5 @@ export function srAutoPack(): void {
     setSetting("sr_packed_month", month); // 처음 쓰는 달은 정리하지 않는다
     return;
   }
-  if (done !== month) srPack(null);
+  if (done !== month) srPack(null, srRulesFor(month) === 2 ? "RESET" : "PACK");
 }

@@ -1,6 +1,6 @@
 import { readJson, withUser } from "@/lib/api";
 import { assert } from "@/lib/errors";
-import { srAddAdhoc, srAdhocAnswer, srAdhocCancel, srAdhocPurge, srAdhocRequest, srAnswer, srDeleteAdhoc, srMission, srMissionCheck, srMove, srPack, srRequest, srToggleLeave } from "@/lib/repo";
+import { srAddAdhoc, srAdhocAnswer, srAdhocCancel, srAdhocPurge, srAdhocRequest, srAnswer, srDeleteAdhoc, srMission, srMissionCheck, srMove, srMoveClass, srPack, srRequest, srToggleLeave } from "@/lib/repo";
 
 type Body =
   /** ↔ 자리 바꾸기 (데스크·관리자) */
@@ -24,8 +24,10 @@ type Body =
   | { action: "MISSION"; classId: number; kind: "RECEIVE" | "CANCEL" | "REQUEST" | "DONE" }
   /** 📄 미션지 확인 — 있는 반 받음 + 없는 반 요청을 한 번에 */
   | { action: "MISSION_CHECK"; have: number[]; missing: number[] }
-  /** 🧹 월초 자리 정리 */
-  | { action: "PACK" };
+  /** 🧹 자리 정리 — PACK 앞으로 당기기 / RESET 처음부터 다시 앉히기 */
+  | { action: "PACK"; mode?: "PACK" | "RESET" }
+  /** ↔ 반 통째로 옮기기 · 맞바꾸기 (데스크·관리자) */
+  | { action: "MOVE_CLASS"; classId: number; col: string };
 
 export const POST = withUser(async ({ user, req }) => {
   const b = await readJson<Body>(req);
@@ -67,7 +69,10 @@ export const POST = withUser(async ({ user, req }) => {
       srMissionCheck(user, b.have ?? [], b.missing ?? []);
       break;
     case "PACK":
-      srPack(user);
+      srPack(user, b.mode === "RESET" ? "RESET" : "PACK");
+      break;
+    case "MOVE_CLASS":
+      srMoveClass(user, b.classId, b.col);
       break;
     default:
       assert(false, "할 일이 지정되지 않았습니다.");

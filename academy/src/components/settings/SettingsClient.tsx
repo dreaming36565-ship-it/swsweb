@@ -7,6 +7,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { IconVolume } from "../Icons";
 import BackupSection from "./BackupSection";
+import PurgeSection from "./PurgeSection";
+import { can } from "@/lib/perm";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
 import { isAlarmEnabled, playAlarm, setAlarmEnabled, unlockAudio } from "@/lib/alarm";
 import { DEPARTMENTS, hasRole, rolesLabel, type SessionUser } from "@/lib/types";
@@ -32,6 +34,7 @@ const PERMISSION_ROWS: [string, string, string, string][] = [
   ["숙제반 관리 (요일 · 신청 등록)", "○", "보기", "○"],
   ["📷 숙제인증 확인", "○", "내 반", "○"],
   ["공지 작성 · 업무 지시", "○", "–", "–"],
+  ["🗑 실수 · 테스트 기록 지우기 (각 화면 🗑 · 기록 정리)", "○", "–", "–"],
 ];
 
 export default function SettingsClient({ user }: { user: SessionUser }) {
@@ -161,6 +164,8 @@ export default function SettingsClient({ user }: { user: SessionUser }) {
         ) : null}
 
         {isAdmin ? <BackupSection /> : null}
+
+        {can(user, "records.purge") ? <PurgeSection /> : null}
 
         <section className="card p-5 xl:col-span-3">
           <h2 className="text-base font-bold text-ink">권한</h2>

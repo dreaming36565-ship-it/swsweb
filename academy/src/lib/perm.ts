@@ -50,6 +50,8 @@ export const PERMISSIONS = {
   "users.write": ["ADMIN"],
   "notices.write": ["ADMIN"],
   "tasks.write": ["ADMIN"],
+  /** 🗑 실수·테스트 기록 지우기 (각 화면 🗑 · 설정 › 기록 정리) */
+  "records.purge": ["ADMIN"],
 } as const satisfies Record<string, readonly Role[]>;
 
 export type Permission = keyof typeof PERMISSIONS;

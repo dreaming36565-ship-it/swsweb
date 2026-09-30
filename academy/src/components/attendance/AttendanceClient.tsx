@@ -7,7 +7,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { reasonText, statusChipClass, statusText, contactLog } from "./ResultTable";
 import ReasonChips from "./ReasonChips";
+import { TrashButton, usePurge } from "../Purge";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
+import { can } from "@/lib/perm";
 import { canMarkAbsent, triggerOf } from "@/lib/attendance";
 import { dateKey, fmtTime, minutesOfDay, rangeLabel } from "@/lib/time";
 import {
@@ -94,6 +96,8 @@ export default function AttendanceClient({ user }: { user: SessionUser }) {
   }, [data]);
 
   const canArrive = user.roles.includes("ADMIN") || user.roles.includes("DESK");
+  const canPurge = can(user, "records.purge");
+  const purge = usePurge();
 
   // 실제 시간이 되어야 열 수 있다 — 오늘은 출결 시작 시각이 지나야, 앞날은 불가 (5초마다 다시 그려져 시간이 되면 풀린다)
   const today = dateKey(new Date());
@@ -182,11 +186,16 @@ export default function AttendanceClient({ user }: { user: SessionUser }) {
                         <td className="px-4 py-2 text-xs text-muted">{contactLog(r).join(" · ") || "—"}</td>
                         {canArrive ? (
                           <td className="whitespace-nowrap px-4 py-2 text-right">
-                            <RecordActions
-                              record={r}
-                              disabled={busy}
-                              send={(body) => void run(() => apiPost("/api/attendance/submit", body))}
-                            />
+                            <div className="flex items-center justify-end gap-1.5">
+                              <RecordActions
+                                record={r}
+                                disabled={busy}
+                                send={(body) => void run(() => apiPost("/api/attendance/submit", body))}
+                              />
+                              {canPurge ? (
+                                <TrashButton disabled={busy} onClick={() => void run(() => purge([{ kind: "ATT", id: r.id }]))} />
+                              ) : null}
+                            </div>
                           </td>
                         ) : null}
                       </tr>

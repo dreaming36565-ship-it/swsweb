@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Modal from "../Modal";
+import { TrashButton, usePurge } from "../Purge";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
 import { can } from "@/lib/perm";
 import {
@@ -33,9 +34,12 @@ import {
 import { DAY_LABELS, rangeLabel } from "@/lib/time";
 import { hasRole, teacherLabel, type SessionUser } from "@/lib/types";
 import type { HomeworkData } from "@/lib/repo/homework";
+import type { PurgeKey } from "@/lib/repo/purge";
 
 type Student = HomeworkData["students"][number];
 type Act = (body: Record<string, unknown>, ok?: string) => Promise<unknown>;
+/** 🗑 관리자 — 기록 지우기 (없으면 버튼을 안 보인다) */
+type Purge = ((keys: PurgeKey[]) => Promise<void>) | undefined;
 
 /** 표시 색 — 시트와 같게 */
 const MARK_CLS: Record<Mark, string> = {
@@ -92,6 +96,21 @@ export default function HomeworkClient({ user, initialView }: { user: SessionUse
     }
   };
 
+  const purge = usePurge();
+  const doPurge: Purge = can(user, "records.purge")
+    ? async (keys) => {
+        setError(null);
+        try {
+          if (await purge(keys)) {
+            await load();
+            setToast("기록을 지웠어요");
+          }
+        } catch (e) {
+          setError(errorMessage(e));
+        }
+      }
+    : undefined;
+
   const h = useHelpers(data);
   const months = useMemo(() => {
     if (!data) return [];
@@ -139,9 +158,9 @@ export default function HomeworkClient({ user, initialView }: { user: SessionUse
       {!data || !h ? (
         <div className="card p-10 text-center text-sm text-muted">불러오는 중…</div>
       ) : view === "check" ? (
-        <CheckView user={user} data={data} h={h} group={group} setGroup={setGroup} month={month} setMonth={setMonth} months={months} mine={mine} setMine={setMine} act={act} setToast={setToast} />
+        <CheckView user={user} data={data} h={h} group={group} setGroup={setGroup} month={month} setMonth={setMonth} months={months} mine={mine} setMine={setMine} act={act} setToast={setToast} purge={doPurge} />
       ) : (
-        <ClassView user={user} data={data} h={h} month={month} setMonth={setMonth} months={months} act={act} open={setModal} />
+        <ClassView user={user} data={data} h={h} month={month} setMonth={setMonth} months={months} act={act} open={setModal} purge={doPurge} />
       )}
       {data && h && modal?.kind === "plan" && modal.studentId ? <PlanModal data={data} h={h} studentId={modal.studentId} act={act} onClose={() => setModal(null)} /> : null}
       {data && h && modal?.kind === "late" && modal.lateId ? <LateModal data={data} h={h} lateId={modal.lateId} act={act} onClose={() => setModal(null)} /> : null}
@@ -241,7 +260,9 @@ function CheckView({
   setMine,
   act,
   setToast,
+  purge,
 }: {
+  purge: Purge;
   user: SessionUser;
   data: HomeworkData;
   h: Helpers;
@@ -376,9 +397,19 @@ function CheckView({
                       </td>
                     );
                   };
+                  // 🗑 이 달 숙제 표시 · 📷 인증 (관리자)
+                  const monthKeys: PurgeKey[] = [
+                    ...[...(h.marks.get(st.id) ?? new Map<string, Mark>()).keys()].filter((d) => d.startsWith(month)).map((d) => ({ kind: "HW_MARK" as const, studentId: st.id, date: d })),
+                    ...[...(h.cert.get(st.id) ?? new Map<string, "OK" | "MISS">()).keys()].filter((d) => d.startsWith(month)).map((d) => ({ kind: "HW_CERT" as const, studentId: st.id, date: d })),
+                  ];
                   return (
                     <tr key={st.id}>
                       <td className="h-7 truncate border border-line px-1.5 text-[13px] font-bold">
+                        {purge && monthKeys.length ? (
+                          <span className="mr-1">
+                            <TrashButton title={`${Number(month.slice(5))}월 숙제 표시 · 📷 인증 지우기 (관리자)`} onClick={() => void purge(monthKeys)} />
+                          </span>
+                        ) : null}
                         {st.name}
                         <span className={`ml-1 inline-block min-w-[30px] rounded-md px-1 text-center font-extrabold ${t.count >= 2 ? "bg-alert-soft text-alert" : t.count >= 1.5 ? "bg-late-soft text-late" : "bg-navy-50"}`}>{t.count}</span>
                         {t.cur ? <span className="ml-1 rounded bg-alert-soft px-1 text-[11px] font-extrabold text-alert" title="강제 숙제반 — 연속 성공">숙제반 {t.cur.streak}/4</span> : null}
@@ -410,7 +441,9 @@ function ClassView({
   months,
   act,
   open,
+  purge,
 }: {
+  purge: Purge;
   user: SessionUser;
   data: HomeworkData;
   h: Helpers;
@@ -703,8 +736,8 @@ function ClassView({
                             const st = h.student(a.studentId);
                             const f = st ? h.tl(st, month).cur : null;
                             return (
+                              <span key={a.studentId} className="inline-flex items-center">
                               <button
-                                key={a.studentId}
                                 type="button"
                                 disabled={!edit}
                                 title={edit ? "눌러서 요일 · 시간 고치기" : undefined}
@@ -714,6 +747,13 @@ function ClassView({
                                 {st?.name ?? ""} <span className="font-medium text-muted">{st?.regular?.name ?? ""}</span>
                                 {f ? <span className="rounded bg-alert-soft px-1 text-[11px] text-alert">강제도 🔥</span> : null}
                               </button>
+                              {purge ? (
+                                <TrashButton
+                                  title={`${st?.name ?? ""} ${Number(month.slice(5))}월 숙제반 신청 지우기 (관리자)`}
+                                  onClick={() => void purge([{ kind: "HW_APPLY", studentId: a.studentId, month }])}
+                                />
+                              ) : null}
+                              </span>
                             );
                           })}
                         </td>
@@ -751,6 +791,7 @@ function ClassView({
                     ) : (
                       <b className="text-alert">날짜 정하기</b>
                     )}
+                    {purge ? <TrashButton title="지각 숙제반 지우기 (관리자)" onClick={() => void purge([{ kind: "HW_LATE", id: l.id }])} /> : null}
                   </span>
                 </div>
               );

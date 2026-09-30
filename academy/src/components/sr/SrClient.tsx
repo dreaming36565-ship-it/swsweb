@@ -10,13 +10,13 @@ import TimeSelect from "../TimeSelect";
 import { useConfirm } from "../ConfirmDialog";
 import { IconPrinter } from "../Icons";
 import SeatMap, { type SeatMark } from "./SeatMap";
-import PrintSheet from "./PrintSheet";
+import PrintSheet, { type PrintKind } from "./PrintSheet";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
 import { can, dayLimit } from "@/lib/perm";
 import { playAlarm } from "@/lib/alarm";
 import { classColorMap, LEVEL_COLOR, type ClassColor } from "@/lib/colors";
-import { LEVEL_NAME, freeSeatsBetween, movableSeatsFor, occupantsAt, seatBlocker, seatCol, type SeatUse } from "@/lib/sr";
-import { DAY_LABELS, clockLabel, fmtTime, minutesOfDay, monthDay, rangeLabel, weekDateOf } from "@/lib/time";
+import { LEVEL_NAME, classMoveOptions, freeSeatsBetween, movableSeatsFor, occupantsAt, seatBlocker, seatCol, type SeatUse } from "@/lib/sr";
+import { DAY_LABELS, addDaysKey, clockLabel, dateKey, fmtTime, minutesOfDay, monthDay, rangeLabel, weekDateOf } from "@/lib/time";
 import { teacherLabel, type SessionUser } from "@/lib/types";
 import type { SrAdhocRequest, SrClass, SrSnapshot } from "@/lib/repo/sr";
 import AdhocRequestPopup from "./AdhocRequestPopup";
@@ -31,7 +31,7 @@ export default function SrClient({ user }: { user: SessionUser }) {
   const mover = can(user, "sr.move");
   const requester = !mover && can(user, "sr.request");
 
-  const [view, setView] = useState<"live" | "day">("live");
+  const [view, setView] = useState<"live" | "day" | "next">("live");
   const [live, setLive] = useState<SrSnapshot | null>(null);
   const [daySnap, setDaySnap] = useState<SrSnapshot | null>(null);
   // 알바 데스크는 근무 요일만
@@ -46,12 +46,19 @@ export default function SrClient({ user }: { user: SessionUser }) {
   const [student, setStudent] = useState<Move | null>(null);
   const [ask, setAsk] = useState<{ seat: string } | null>(null);
   const [adhocForm, setAdhocForm] = useState(false);
-  const [print, setPrint] = useState(false);
   /** 🙋 SR 자리 요청 — 선생님 요청 창 / 데스크 배정 창 */
   const [adhocAsk, setAdhocAsk] = useState(false);
   const [adhocAnswer, setAdhocAnswer] = useState<SrAdhocRequest | null>(null);
   /** 🗑 요청 기록 지우기 (관리자) */
   const [purge, setPurge] = useState(false);
+  /** 📅 다음 달 자리 미리보기 */
+  const [nextSnap, setNextSnap] = useState<SrSnapshot | null>(null);
+  /** ↔ 반 통째로 옮기기 — 옮기는 반 */
+  const [classMove, setClassMove] = useState<number | null>(null);
+  const [packOpen, setPackOpen] = useState(false);
+  const [printPick, setPrintPick] = useState(false);
+  const [printJob, setPrintJob] = useState<{ kind: PrintKind; snap: SrSnapshot } | null>(null);
+  const nextMonth = (new Date().getMonth() + 1) % 12 + 1;
   const waitCount = useRef<number | null>(null);
 
   const dayDate = weekDateOf(day);
@@ -75,9 +82,16 @@ export default function SrClient({ user }: { user: SessionUser }) {
       setError(errorMessage(e));
     }
   }, [dayDate]);
+  const loadNext = useCallback(async () => {
+    try {
+      setNextSnap(await apiGet<SrSnapshot>(`/api/sr?date=${dayDate}&preview=1`));
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }, [dayDate]);
   const reload = useCallback(async () => {
-    await Promise.all([loadLive(), view === "day" ? loadDay() : Promise.resolve()]);
-  }, [loadLive, loadDay, view]);
+    await Promise.all([loadLive(), view === "day" ? loadDay() : view === "next" ? loadNext() : Promise.resolve()]);
+  }, [loadLive, loadDay, loadNext, view]);
 
   useEffect(() => {
     void loadLive();
@@ -89,7 +103,8 @@ export default function SrClient({ user }: { user: SessionUser }) {
   }, [loadLive]);
   useEffect(() => {
     if (view === "day") void loadDay();
-  }, [view, loadDay]);
+    if (view === "next") void loadNext();
+  }, [view, loadDay, loadNext]);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 2600);
@@ -109,18 +124,10 @@ export default function SrClient({ user }: { user: SessionUser }) {
     }
   };
 
-  const snapFor = view === "live" ? live : daySnap;
+  const snapFor = view === "live" ? live : view === "day" ? daySnap : nextSnap;
   const cls = (snap: SrSnapshot | null, id: number) => snap?.classes.find((c) => c.id === id);
   const nameOf = (snap: SrSnapshot, classId: number, studentId: number) => cls(snap, classId)?.members.find((m) => m.id === studentId)?.name ?? "";
 
-  const pack = async () => {
-    const yes = await confirm({
-      title: "🧹 월초 자리 정리",
-      message: "퇴원 등으로 생긴 빈자리를 없애고, 반마다 쓰던 열 안에서 앞자리부터 다시 채워요. 사람이 옮긴 자리는 그대로 둬요. (매달 1일에는 저절로 해요)",
-      confirmText: "정리하기",
-    });
-    if (yes) void act({ action: "PACK" }, "빈자리를 앞으로 당겨 정리했어요 (반마다 쓰던 열은 그대로)");
-  };
 
   return (
     <div className="w-full space-y-3">
@@ -130,6 +137,7 @@ export default function SrClient({ user }: { user: SessionUser }) {
             [
               ["live", "실시간 좌석 현황"],
               ["day", "요일별 자리 배치"],
+              ["next", `📅 ${nextMonth}월 자리 미리보기`],
             ] as const
           ).map(([k, n]) => (
             <button
@@ -140,6 +148,7 @@ export default function SrClient({ user }: { user: SessionUser }) {
                 setView(k);
                 setMove(null);
                 setAdhoc(null);
+                setClassMove(null);
               }}
             >
               {n}
@@ -157,13 +166,13 @@ export default function SrClient({ user }: { user: SessionUser }) {
               ＋ 임시 자리 잡기
             </button>
           ) : null}
-          <button type="button" className="btn" onClick={() => setPrint(true)} disabled={!live}>
+          <button type="button" className="btn" onClick={() => setPrintPick(true)} disabled={!live}>
             <IconPrinter className="h-4 w-4" />
             좌석표 인쇄 (PDF)
           </button>
           {can(user, "sr.pack") ? (
-            <button type="button" className="btn" onClick={() => void pack()}>
-              🧹 월초 자리 정리
+            <button type="button" className="btn" onClick={() => setPackOpen(true)}>
+              🧹 자리 정리
             </button>
           ) : null}
           {can(user, "sr.purge") ? (
@@ -212,11 +221,34 @@ export default function SrClient({ user }: { user: SessionUser }) {
           }}
           slot={slot}
           setSlot={setSlot}
-          move={move}
-          adhoc={adhoc}
+          move={view === "next" ? null : move}
+          adhoc={view === "next" ? null : adhoc}
+          preview={view === "next"}
+          classMove={view === "next" ? null : classMove}
+          onClassMove={(id) => {
+            setMove(null);
+            setAdhoc(null);
+            setClassMove(id);
+          }}
+          onPickClassCol={async (col) => {
+            if (classMove === null || !snapFor) return;
+            const c = snapFor.classes.find((x) => x.id === classMove);
+            const opt = classMoveOptions(snapFor.weekUses, (id) => snapFor.blocks.filter((b) => b.classId === id), classMove).get(col);
+            if (!opt || (opt.kind !== "move" && opt.kind !== "swap")) return;
+            const yes = await confirm({
+              title: opt.kind === "swap" ? `${c?.name} ⇄ ${opt.label} 자리를 맞바꿀까요?` : `${c?.name}을(를) ${col}열로 옮길까요?`,
+              message:
+                opt.kind === "swap"
+                  ? `${c?.name} → ${col}열 · ${opt.label} → ${c?.name}이(가) 앉던 열. 두 반이 SR을 쓰는 모든 요일에 적용돼요.`
+                  : `${c?.name} ${c?.members.length ?? 0}명 → ${col}1부터. 이 반이 SR을 쓰는 모든 요일에 적용돼요.`,
+              confirmText: opt.kind === "swap" ? "맞바꾸기" : "옮기기",
+            });
+            if (yes && (await act({ action: "MOVE_CLASS", classId: classMove, col }, opt.kind === "swap" ? "맞바꿈" : `${col}열로 옮김`))) setClassMove(null);
+          }}
           cancelMode={() => {
             setMove(null);
             setAdhoc(null);
+            setClassMove(null);
           }}
           onPickMove={(seat) => {
             if (!move) return;
@@ -286,7 +318,27 @@ export default function SrClient({ user }: { user: SessionUser }) {
         />
       ) : null}
 
-      {print && live ? <PrintSheet snap={live} onClose={() => setPrint(false)} /> : null}
+      {printPick && live ? (
+        <PrintPickModal
+          nextMonth={nextMonth}
+          onClose={() => setPrintPick(false)}
+          onPick={async (kind, date) => {
+            const snap = kind === "week" ? live : await apiGet<SrSnapshot>(kind === "next" ? "/api/sr?preview=1" : `/api/sr?date=${date}`);
+            setPrintPick(false);
+            setPrintJob({ kind, snap });
+          }}
+        />
+      ) : null}
+      {printJob ? <PrintSheet snap={printJob.snap} kind={printJob.kind} onClose={() => setPrintJob(null)} /> : null}
+
+      {packOpen ? (
+        <PackModal
+          onClose={() => setPackOpen(false)}
+          onPack={async (mode) => {
+            if (await act({ action: "PACK", mode }, mode === "RESET" ? "처음부터 다시 앉혔어요" : "빈자리를 앞으로 당겨 정리했어요")) setPackOpen(false);
+          }}
+        />
+      ) : null}
 
       {adhocAsk && live ? (
         <AdhocAskModal
@@ -445,6 +497,143 @@ function PurgeModal({ list, onClose, onPurge }: { list: SrAdhocRequest[]; onClos
         </div>
       ))}
       {error ? <p className="mt-2 text-sm font-semibold text-alert">{error}</p> : null}
+    </Modal>
+  );
+}
+
+/** 🖨 좌석표 인쇄 — 한 주 / 하루(보강·임시 자리·하원 반영) / 다음 달 미리보기 */
+function PrintPickModal({ nextMonth, onClose, onPick }: { nextMonth: number; onClose: () => void; onPick: (kind: PrintKind, date: string) => Promise<void> }) {
+  const [kind, setKind] = useState<PrintKind>("week");
+  const days = Array.from({ length: 7 }, (_, i) => addDaysKey(dateKey(new Date()), i));
+  const [date, setDate] = useState(days[0]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const opt = (k: PrintKind, label: string, sub: string) => (
+    <button type="button" className={`rounded-xl border px-3 py-2.5 text-left text-sm ${kind === k ? "border-2 border-navy-800" : "border-line"}`} onClick={() => setKind(k)}>
+      <b>{label}</b>
+      <span className="block text-xs text-muted">{sub}</span>
+    </button>
+  );
+  return (
+    <Modal
+      open
+      width={560}
+      title="🖨 좌석표 인쇄"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            취소
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy}
+            onClick={async () => {
+              setError(null);
+              setBusy(true);
+              try {
+                await onPick(kind, date);
+              } catch (e) {
+                setError(errorMessage(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            미리보기
+          </button>
+        </>
+      }
+    >
+      <div className="grid grid-cols-3 gap-2">
+        {opt("week", "한 주", "월수금 / 화목토 2장")}
+        {opt("day", "하루", "📌 보강 · 임시 자리 · 🏠 하원까지")}
+        {opt("next", `📅 ${nextMonth}월`, "다음 달 자리 미리보기")}
+      </div>
+      {kind === "day" ? (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {days.map((d, i) => (
+            <button key={d} type="button" className={`btn px-2.5 py-1 text-xs ${date === d ? "btn-primary" : ""}`} onClick={() => setDate(d)}>
+              {i === 0 ? "오늘 " : i === 1 ? "내일 " : ""}
+              {monthDay(d)}({DAY_LABELS[new Date(`${d}T00:00:00`).getDay()]})
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {error ? <p className="mt-2 text-sm font-semibold text-alert">{error}</p> : null}
+    </Modal>
+  );
+}
+
+/** 🧹 자리 정리 (관리자) — 앞으로 당기기 / 처음부터 다시 앉히기. 누르기 전에 바뀌는 학생을 보여 준다 */
+function PackModal({ onClose, onPack }: { onClose: () => void; onPack: (mode: "PACK" | "RESET") => Promise<void> }) {
+  const [mode, setMode] = useState<"PACK" | "RESET">("PACK");
+  const [diff, setDiff] = useState<{ name: string; className: string; from: string | null; to: string | null }[] | null>(null);
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setDiff(null);
+    setError(null);
+    apiGet<typeof diff>(`/api/sr/pack-diff?mode=${mode}`)
+      .then((d) => alive && setDiff(d))
+      .catch((e) => alive && setError(errorMessage(e)));
+    return () => {
+      alive = false;
+    };
+  }, [mode]);
+  const opt = (m: "PACK" | "RESET", label: string, sub: string) => (
+    <button type="button" className={`mb-2 block w-full rounded-xl border px-3 py-2.5 text-left text-sm ${mode === m ? "border-2 border-navy-800" : "border-line"}`} onClick={() => setMode(m)}>
+      <b>{label}</b>
+      <span className="block text-xs text-muted">{sub}</span>
+    </button>
+  );
+  return (
+    <Modal
+      open
+      width={560}
+      title="🧹 자리 정리"
+      subtitle="매달 1일에는 저절로 「처음부터 다시 앉히기」를 해요"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            취소
+          </button>
+          <button type="button" className="btn btn-primary" disabled={!diff} onClick={() => void onPack(mode)}>
+            정리하기
+          </button>
+        </>
+      }
+    >
+      {opt("PACK", "앞으로 당기기", "반마다 쓰던 열은 그대로 · 빈자리만 앞으로 · 사람이 옮긴 자리 그대로")}
+      {opt("RESET", "처음부터 다시 앉히기", "지금 명단 · 지금 규칙으로 열까지 새로 · 사람이 옮긴 자리도 초기화")}
+      <div className="mt-1 rounded-xl border border-late bg-late-soft px-3 py-2 text-sm">
+        {error ? (
+          <span className="font-semibold text-alert">{error}</span>
+        ) : !diff ? (
+          <span className="text-muted">계산 중…</span>
+        ) : diff.length === 0 ? (
+          <span>바뀌는 학생 없음</span>
+        ) : (
+          <>
+            바뀌는 학생 <b>{diff.length}명</b>{" "}
+            <button type="button" className="font-semibold text-navy-700 underline" onClick={() => setOpen(!open)}>
+              {open ? "접기" : "누가 바뀌는지 보기"}
+            </button>
+            {open ? (
+              <div className="mt-2 max-h-56 overflow-auto rounded-lg bg-white px-2 py-1 text-xs">
+                {diff.map((d, i) => (
+                  <div key={i} className="border-b border-line py-1 last:border-b-0">
+                    {d.className} <b>{d.name}</b> {d.from ?? "—"} → {d.to ?? <span className="text-alert">자리 없음</span>}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </>
+        )}
+      </div>
     </Modal>
   );
 }
@@ -799,9 +988,18 @@ function DayView({
   onPickMove,
   onPickAdhoc,
   onStudent,
+  preview,
+  classMove,
+  onClassMove,
+  onPickClassCol,
 }: {
   user: SessionUser;
   snap: SrSnapshot;
+  /** 📅 다음 달 자리 미리보기 — 보기만 */
+  preview?: boolean;
+  classMove: number | null;
+  onClassMove: (classId: number) => void;
+  onPickClassCol: (col: string) => void;
   day: number;
   setDay: (d: number) => void;
   slot: number;
@@ -833,7 +1031,7 @@ function DayView({
   const [s, e] = slots[idx] ?? [null, null];
   const occ = s === null ? new Map<string, SeatUse>() : occupantsAt(uses, day, s);
 
-  let mark: ((seat: string) => SeatMark | null) | undefined;
+  let mark: ((seat: string, o?: SeatUse) => SeatMark | null) | undefined;
   let banner = null;
   if (move) {
     const key = `${move.classId}|${move.studentId}`;
@@ -864,6 +1062,41 @@ function DayView({
         </span>
         <button type="button" className="btn px-2.5 py-1 text-xs" onClick={cancelMode}>
           취소
+        </button>
+      </div>
+    );
+  } else if (classMove !== null) {
+    const opts = classMoveOptions(snap.weekUses, (id) => snap.blocks.filter((b) => b.classId === id), classMove);
+    const cname = snap.classes.find((c) => c.id === classMove)?.name ?? "";
+    mark = (seat, o) => {
+      const col = seatCol(seat);
+      const opt = opts.get(col);
+      const who = <span className="mt-1.5 block text-[11px]">{o ? `${o.name} · ${o.label}` : "빈자리"}</span>;
+      if (!opt || opt.kind === "self") return { tone: "self", content: <span className="mt-1.5 block text-xs font-extrabold">{o?.name ?? "지금 열"}</span> };
+      if (opt.kind === "move")
+        return { tone: "pick", onClick: () => onPickClassCol(col), title: `${cname} → ${col}열`, content: <span className="mt-1.5 block text-sm font-extrabold">여기로</span> };
+      if (opt.kind === "swap")
+        return {
+          tone: "swap",
+          onClick: () => onPickClassCol(col),
+          title: `${cname} ⇄ ${opt.label}`,
+          content: (
+            <>
+              <span className="mt-1.5 block text-xs font-extrabold">⇄ 맞바꾸기</span>
+              <span className="text-[11px]">{o?.name ?? ""}</span>
+            </>
+          ),
+        };
+      return { tone: "block", title: opt.reason, content: who };
+    };
+    banner = (
+      <div className="flex items-center justify-between rounded-xl border border-srpink-soft bg-srpink-soft px-4 py-2.5 text-sm font-bold text-srpink">
+        <span>
+          ↔ <b>{cname}</b> 반 통째로 옮기기 — 옮길 열을 누르세요 · 분홍 = 빈 열로 옮기기 · <span className="text-late">노랑 = 그 반과 맞바꾸기</span> · 회색 = 안 됨(마우스를 올리면
+          이유). 이 반이 SR을 쓰는 <b>모든 요일</b>에 적용돼요.
+        </span>
+        <button type="button" className="btn px-2.5 py-1 text-xs" onClick={cancelMode}>
+          그만
         </button>
       </div>
     );
@@ -899,7 +1132,14 @@ function DayView({
           {over.map((o) => `${snap.classes.find((c) => c.id === o.classId)?.members.find((m) => m.id === o.studentId)?.name ?? ""}(${snap.classes.find((c) => c.id === o.classId)?.name ?? ""})`).join(", ")}
         </div>
       ) : null}
-      {monthEnd ? <div className="rounded-xl border border-late bg-late-soft px-4 py-2.5 text-sm font-bold text-late">📅 다음 달 1일에 빈자리를 앞으로 당겨 정리해요 (월초 자리 정리).</div> : null}
+      {preview && snap.preview ? (
+        <div className="rounded-xl border border-srpink-soft bg-srpink-soft px-4 py-2.5 text-sm text-srpink">
+          <b>📅 {Number(snap.preview.month.slice(5))}월 자리 미리보기</b> — 지금 명단(다음 달 숙제반 신청 포함) · 새 규칙으로 처음부터 앉혀 본 모습이에요. 저장 안 함 ·{" "}
+          <b>{Number(snap.preview.month.slice(5))}/1에 저절로 이렇게</b> 바뀌어요. 지금과 달라지는 학생 <b>{snap.preview.changed}명</b>
+        </div>
+      ) : monthEnd ? (
+        <div className="rounded-xl border border-late bg-late-soft px-4 py-2.5 text-sm font-bold text-late">📅 다음 달 1일에 자리를 처음부터 다시 정리해요 — 「📅 다음 달 자리 미리보기」에서 미리 볼 수 있어요.</div>
+      ) : null}
       <div className="flex flex-wrap gap-1.5">
         {WEEK.map((x) => (
           <button
@@ -932,34 +1172,35 @@ function DayView({
             </b>
             <span className="rounded-full border border-line px-2.5 py-0.5 text-xs font-bold">{occ.size} / 24석</span>
           </div>
-          <SeatMap occ={occ} colors={colors} mark={mark} onSeat={(o) => !o.adhocId && onStudent(o)} />
+          <SeatMap occ={occ} colors={colors} mark={mark} onSeat={(o) => !preview && !o.adhocId && onStudent(o)} />
         </div>
         <div className="w-[340px] shrink-0 space-y-3">
           <div className="card p-4">
             <h3 className="mb-2 text-[15px] font-bold">이 요일 SR 반</h3>
             {dayClasses.length === 0 ? <p className="text-sm text-muted">없어요.</p> : null}
             {dayClasses.map((id) => (
-              <Legend key={id} snap={snap} classId={id} day={day} color={colors.get(id)} />
+              <Legend key={id} snap={snap} classId={id} day={day} color={colors.get(id)} onMove={!preview && can(user, "sr.move") ? () => onClassMove(id) : undefined} />
             ))}
           </div>
-          <LogPanel snap={snap} />
+          {preview ? null : <LogPanel snap={snap} />}
           <div className="card p-4">
             <h3 className="mb-2 text-[15px] font-bold">자리 정하는 규칙</h3>
-            <ul className="list-disc space-y-1 pl-4 text-[13px] leading-relaxed">
+            <p className="mb-1 text-xs text-muted">위가 먼저 · 10/1부터 새 규칙</p>
+            <ol className="list-decimal space-y-1 pl-4 text-[13px] leading-relaxed">
               <li>
-                학생은 그 반이 SR을 쓰는 <b>모든 요일에 같은 자리</b>
+                <b>고등부</b>(누적오답 포함)는 <b>혼자 쓰는 열</b>, 되도록 옆 열도 비워서
               </li>
               <li>
-                <b>같은 반은 같은 열</b>, 앞자리(1번)부터. 6명이 넘으면 두 열로
+                <b>고등 ↔ 초등</b>은 먼 열 (고등 D ↔ 초등 A), 중등은 가운데
               </li>
               <li>
-                <b>고등과 초등이 같은 시간</b>이면 최대한 먼 열 (고등 D ↔ 초등 A), 중등은 가운데(B·C)
+                <b>같은 학년 반</b>은 열을 띄워서 (같은 열 · 바로 옆 열 피함)
               </li>
               <li>
-                퇴원으로 빈자리가 생겨도 다른 학생 자리는 그대로 — <b>매달 1일에 앞으로 당겨 정리</b>
+                <b>같은 반은 같은 열</b>, 앞자리(1번)부터 · 모든 SR 요일에 같은 자리
               </li>
-              <li>사람이 옮긴 자리는 다시 계산해도 그대로 둬요</li>
-            </ul>
+            </ol>
+            <p className="mt-2 text-xs text-muted">매달 1일에 사람이 옮긴 자리까지 초기화하고 처음부터 다시 앉혀요. 달 중간에 새로 온 학생은 빈자리에.</p>
           </div>
         </div>
       </div>
@@ -967,7 +1208,7 @@ function DayView({
   );
 }
 
-function Legend({ snap, classId, day, color }: { snap: SrSnapshot; classId: number; day: number; color?: ClassColor }) {
+function Legend({ snap, classId, day, color, onMove }: { snap: SrSnapshot; classId: number; day: number; color?: ClassColor; onMove?: () => void }) {
   const c = snap.classes.find((x) => x.id === classId);
   const b = snap.blocks.find((x) => x.classId === classId && x.day === day);
   if (!c || !b) return null;
@@ -985,6 +1226,11 @@ function Legend({ snap, classId, day, color }: { snap: SrSnapshot; classId: numb
         {c.members.length}명 · {columnsOf(snap, c.id) || "—"}열 · {rangeLabel(b.start, b.end)}
       </span>
       {mis}
+      {onMove ? (
+        <button type="button" className="btn ml-auto shrink-0 px-1.5 py-0 text-xs" onClick={onMove} title="↔ 반 통째로 옮기기 · 맞바꾸기" aria-label="반 옮기기">
+          ↔
+        </button>
+      ) : null}
     </div>
   );
 }

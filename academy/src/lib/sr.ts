@@ -6,6 +6,10 @@
 //   - 고등과 초등이 같은 시간에 쓰면 최대한 먼 열 (고등 D ↔ 초등 A), 중등은 가운데(B·C)
 //   - 한 번 정한 자리는 그대로 둔다 (퇴원으로 빈자리가 생겨도 다른 학생은 안 움직임) — 매달 1일에 앞으로 당겨 정리
 //   - 사람이 옮긴 자리(manual)는 다시 계산해도 그대로
+// 새 규칙 (2026-10-01부터, rules 2) — 위가 먼저:
+//   ① 고등부(누적오답 포함)는 혼자 쓰는 열, 되도록 옆 열도 비워 떨어뜨린다
+//   ② 고등 ↔ 초등 먼 열  ③ 같은 학년 반은 열을 띄워서(같은 열·바로 옆 열 피함)  ④ 같은 반 같은 열
+//   매달 1일에는 사람이 옮긴 자리까지 초기화하고 처음부터 다시 앉힌다 (fresh)
 // 수동 이동: 그 반이 SR을 쓰는 모든 요일·시간 동안 비어 있는 자리만.
 
 import { overlaps } from "./time";
@@ -39,6 +43,13 @@ export function gradeLevel(grade: string | null, level?: string | null): Level |
 // 먼저 앉히는 열 — 초등은 왼쪽(A)부터, 고등은 오른쪽(D)부터, 중등은 가운데
 const PREF: Record<Level, string[]> = { E: ["A", "B", "C", "D"], M: ["B", "C", "A", "D"], H: ["D", "C", "B", "A"] };
 
+/** 새 규칙(rules 2)을 쓰는 달 — 2026-10 부터 */
+export const SR_RULES2_FROM = "2026-10";
+export const srRulesFor = (month: string): 1 | 2 => (month >= SR_RULES2_FROM ? 2 : 1);
+
+/** 같은 학년 비교용 — 초·중·고 학년이 있는 반만 (숙제반 · 개별반 등은 빼고) */
+export const gradeKey = (grade: string | null | undefined): string | null => (grade && /^(초|중|고)/.test(grade) ? grade : null);
+
 /** 반이 SR을 쓰는 시간 한 칸 */
 export type SrBlock = { classId: number; day: number; start: number; end: number };
 
@@ -47,12 +58,16 @@ export const seatKey = (classId: number, studentId: number): SeatKey => `${class
 
 export type PlanInput = {
   /** SR을 쓰는 반 — 학교급과 학생 */
-  classes: { id: number; level: Level; members: number[] }[];
+  classes: { id: number; level: Level; members: number[]; grade?: string | null }[];
   blocks: SrBlock[];
   /** 지금 자리 — 그대로 둔다 (겹치게 되었거나 반에서 빠진 학생 자리는 버린다) */
   existing: { classId: number; studentId: number; seat: string; manual: boolean }[];
   /** 월초 정리: 사람이 옮긴 자리만 남기고, 반마다 쓰던 열 안에서 앞자리부터 다시 채운다 */
   pack?: boolean;
+  /** 처음부터 다시 앉히기 — 지금 자리(사람이 옮긴 자리 포함)를 모두 버린다 */
+  fresh?: boolean;
+  /** 자리 규칙 판 — 2 = 고등 독립 열 · 같은 학년 띄우기 (기본 1) */
+  rules?: 1 | 2;
   /** 🔗 합반 짝 (반id → 짝 반id) — 짝이 앉은 열에 이어서 앉힌다 */
   partners?: Map<number, number>;
 };
@@ -88,7 +103,7 @@ export function planSeats(input: PlanInput): PlanResult {
 
   // 월초 정리 전에 반마다 쓰던 열 (사람이 옮긴 자리는 빼고)
   const keepColumns = new Map<number, string[]>();
-  if (input.pack) {
+  if (input.pack && !input.fresh) {
     for (const e of input.existing) {
       if (e.manual || !info.has(e.classId)) continue;
       const cols = keepColumns.get(e.classId) ?? [];
@@ -98,7 +113,7 @@ export function planSeats(input: PlanInput): PlanResult {
   }
 
   // 1) 지금 자리 — 사람이 옮긴 자리 먼저
-  const existing = [...input.existing].sort((a, b) => Number(b.manual) - Number(a.manual));
+  const existing = (input.fresh ? [] : [...input.existing]).sort((a, b) => Number(b.manual) - Number(a.manual));
   for (const e of existing) {
     if (input.pack && !e.manual) continue;
     const c = info.get(e.classId);
@@ -109,8 +124,10 @@ export function planSeats(input: PlanInput): PlanResult {
 
   // 2) 자리가 없는 학생 — SR 요일이 많은 반 → 일찍 시작하는 반 → 인원 많은 반 순서로
   const firstStart = (id: number) => Math.min(...blocksBy.get(id)!.map((b) => b.day * 1440 + b.start));
+  const v2 = input.rules === 2;
   const order = [...classes].sort(
     (a, b) =>
+      (v2 ? Number(b.level === "H") - Number(a.level === "H") : 0) || // 새 규칙: 고등부 먼저 자리를 잡는다
       blocksBy.get(b.id)!.length - blocksBy.get(a.id)!.length ||
       firstStart(a.id) - firstStart(b.id) ||
       b.members.length - a.members.length ||
@@ -153,6 +170,13 @@ export function planSeats(input: PlanInput): PlanResult {
             for (const y of oCols) {
               const dist = Math.abs(SEAT_COLS.indexOf(x as never) - SEAT_COLS.indexOf(y as never));
               if ((c.level === "E" && oLv === "H") || (c.level === "H" && oLv === "E")) score += (3 - dist) * 100; // 고등 ↔ 초등 멀리
+              if (v2) {
+                // ① 고등부는 다른 학교급과 같은 열 · 바로 옆 열을 피한다
+                if ((c.level === "H") !== (oLv === "H")) score += dist === 0 ? 1000 : dist === 1 ? 300 : 0;
+                // ③ 같은 학년 반은 열을 띄운다
+                const g = gradeKey(c.grade);
+                if (g && g === gradeKey(info.get(o)!.grade)) score += dist === 0 ? 80 : dist === 1 ? 60 : 0;
+              }
               // 겹치는 반과 같은 열은 되도록 피한다 — 같은 학교급끼리 한 열을 나눠 쓰는 건 괜찮다
               if (x === y) score += c.level === oLv ? 5 : 15;
             }
@@ -226,6 +250,62 @@ export function movableSeatsFor(uses: SeatUse[], blocks: SrBlock[], key: string)
       if (who) break;
     }
     out.set(seat, who);
+  }
+  return out;
+}
+
+/** ↔ 반 통째로 옮기기 — 열마다 옮길 수 있는지 */
+export type ClassMoveOption =
+  | { kind: "self" }
+  /** 그 반이 SR을 쓰는 모든 시간에 비어 있는 열 */
+  | { kind: "move" }
+  /** 다른 반 한 개가 통째로 앉은 열 — 두 반 맞바꾸기 */
+  | { kind: "swap"; classId: number; label: string }
+  | { kind: "no"; reason: string };
+
+const blockOverlap = (blocks: SrBlock[], u: SeatUse) => blocks.some((b) => b.day === u.day && overlaps(b.start, b.end, u.start, u.end));
+
+/**
+ * 반을 다른 열로 옮기기 / 맞바꾸기 판단. uses = 주간 자리 사용, blocksOf(반id) = 그 반의 SR 칸.
+ * 옮기기: 그 반의 모든 SR 시간에 그 열을 쓰는 사람이 없을 때.
+ * 맞바꾸기: 그 열을 쓰는 사람이 한 반뿐이고, 그 반 학생이 모두 그 열에 있고, 그 반이 원래 열로 와도 서로의 시간에 문제가 없을 때.
+ */
+export function classMoveOptions(uses: SeatUse[], blocksOf: (classId: number) => SrBlock[], classId: number): Map<string, ClassMoveOption> {
+  const out = new Map<string, ClassMoveOption>();
+  const mine = uses.filter((u) => u.classId === classId);
+  const myCols = [...new Set(mine.map((u) => seatCol(u.seat)))];
+  const myCount = new Set(mine.map((u) => u.key)).size;
+  const myBlocks = blocksOf(classId);
+  for (const col of SEAT_COLS) {
+    if (myCols.length === 1 && myCols[0] === col) {
+      out.set(col, { kind: "self" });
+      continue;
+    }
+    if (myCount > SEAT_ROWS) {
+      out.set(col, { kind: "no", reason: `${SEAT_ROWS}명이 넘는 반은 학생마다 옮겨 주세요` });
+      continue;
+    }
+    const inCol = uses.filter((u) => seatCol(u.seat) === col && u.classId !== classId && blockOverlap(myBlocks, u));
+    if (inCol.length === 0) {
+      out.set(col, { kind: "move" });
+      continue;
+    }
+    const others = [...new Set(inCol.map((u) => u.classId))];
+    const other = others[0];
+    if (others.length !== 1 || other === null) {
+      out.set(col, { kind: "no", reason: `${[...new Set(inCol.map((u) => u.label))].join(" · ")}이(가) 써요` });
+      continue;
+    }
+    const theirs = uses.filter((u) => u.classId === other);
+    const label = inCol[0].label;
+    if (myCols.length !== 1 || theirs.some((u) => seatCol(u.seat) !== col)) {
+      out.set(col, { kind: "no", reason: `${label}이(가) 여러 열에 앉아 있어요` });
+      continue;
+    }
+    // 그 반이 우리 열로 와도 되는가 — 그 반 시간에 우리 열을 쓰는 다른 사람(우리 반 빼고)이 없어야
+    const theirBlocks = blocksOf(other);
+    const clash = uses.find((u) => seatCol(u.seat) === myCols[0] && u.classId !== classId && u.classId !== other && blockOverlap(theirBlocks, u));
+    out.set(col, clash ? { kind: "no", reason: `맞바꾸면 ${label}이(가) ${clash.label}과(와) 겹쳐요` } : { kind: "swap", classId: other, label });
   }
   return out;
 }

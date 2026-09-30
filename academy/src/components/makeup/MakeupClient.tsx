@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Modal from "../Modal";
 import TimeSelect from "../TimeSelect";
 import ReasonChips from "../attendance/ReasonChips";
+import { TrashButton, usePurge } from "../Purge";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
 import { can } from "@/lib/perm";
 import { NOTICE_LABEL, STATUS_ORDER, catOfReason, flagsOf, isOpen, statusOf, usesDreamPlus, verdictOf, type MakeupStatus } from "@/lib/makeup";
@@ -75,6 +76,22 @@ export default function MakeupClient({ user }: { user: SessionUser }) {
     }
   };
 
+  // 🗑 결석 한 건 지우기 (관리자) — 보강 회차 · 변경 기록 같이
+  const purge = usePurge();
+  const onPurge = can(user, "records.purge")
+    ? async (a: Absence) => {
+        setError(null);
+        try {
+          if (await purge([{ kind: "ABS", id: a.id }])) {
+            await load();
+            setToast("기록을 지웠어요");
+          }
+        } catch (e) {
+          setError(errorMessage(e));
+        }
+      }
+    : undefined;
+
   const today = data?.today ?? "";
   const all = data?.absences ?? [];
   const teachers = useMemo(() => {
@@ -88,7 +105,7 @@ export default function MakeupClient({ user }: { user: SessionUser }) {
   const opened = all.find((a) => a.id === openId) ?? null;
 
   const table = (rows: Absence[], empty: string, group = false) => (
-    <AbsenceTable rows={rows} empty={empty} group={group} today={today} onOpen={setOpenId} onStudent={setStudentName} canPlanRow={(a) => canPlan(user, a)} onPlan={(a) => setPlanId(a.id)} />
+    <AbsenceTable rows={rows} empty={empty} group={group} today={today} onOpen={setOpenId} onStudent={setStudentName} canPlanRow={(a) => canPlan(user, a)} onPlan={(a) => setPlanId(a.id)} onPurge={onPurge} />
   );
   const planning = all.find((a) => a.id === planId) ?? null;
 
@@ -174,7 +191,7 @@ export default function MakeupClient({ user }: { user: SessionUser }) {
                 <p className="mb-2 text-sm text-muted">
                   결석 {mine.length}회 · {Object.entries(cnt).map(([k, v]) => `${k} ${v}`).join(" · ")}
                 </p>
-                <AbsenceTable rows={mine} empty="기록이 없어요" today={today} onOpen={(id) => { setStudentName(null); setOpenId(id); }} onStudent={() => undefined} />
+                <AbsenceTable rows={mine} empty="기록이 없어요" today={today} onOpen={(id) => { setStudentName(null); setOpenId(id); }} onStudent={() => undefined} onPurge={onPurge} />
               </>
             );
           })()}
@@ -343,7 +360,10 @@ function AbsenceTable({
   onStudent,
   canPlanRow,
   onPlan,
+  onPurge,
 }: {
+  /** 🗑 관리자 — 결석 한 건 지우기 */
+  onPurge?: (a: Absence) => void;
   /** 표에서 바로 보강 일정 넣기 (담당T) */
   canPlanRow?: (a: Absence) => boolean;
   onPlan?: (a: Absence) => void;
@@ -363,7 +383,7 @@ function AbsenceTable({
       cur = ym;
       body.push(
         <tr key={`g${ym}`}>
-          <td colSpan={9} className="bg-navy-100 px-3 py-1.5 font-extrabold text-navy-900">
+          <td colSpan={onPurge ? 10 : 9} className="bg-navy-100 px-3 py-1.5 font-extrabold text-navy-900">
             {ym.slice(0, 4)}년 {Number(ym.slice(5))}월 결석 · {rows.filter((x) => x.date.startsWith(ym)).length}건
           </td>
         </tr>,
@@ -419,6 +439,11 @@ function AbsenceTable({
         </td>
         <td className="px-3 py-2 text-center">{usesDreamPlus(a) ? (a.dream ? "✓" : <span className="text-navy-200">·</span>) : <span className="text-muted" title="고등부 — 이 앱에만 기록">—</span>}</td>
         <td className="max-w-[170px] truncate px-3 py-2 text-xs text-muted">{a.memo.split("\n")[0]}</td>
+        {onPurge ? (
+          <td className="px-2 py-2 text-right">
+            <TrashButton onClick={() => onPurge(a)} />
+          </td>
+        ) : null}
       </tr>,
     );
   }
@@ -432,6 +457,7 @@ function AbsenceTable({
                 {h}
               </th>
             ))}
+            {onPurge ? <th className="w-10" /> : null}
           </tr>
         </thead>
         <tbody>{body}</tbody>

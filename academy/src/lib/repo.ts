@@ -9,3 +9,4 @@ export * from "./repo/attendance";
 export * from "./repo/absence";
 export * from "./repo/homework";
 export * from "./repo/misc";
+export * from "./repo/purge";
