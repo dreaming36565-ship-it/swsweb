@@ -59,8 +59,12 @@ export function RoomView({ ctx, day }: { ctx: Ctx; day: number }) {
     const items = on.filter(({ p }) => p.roomId === r.id);
     for (const { c, p } of items) {
       const msgs: string[] = [];
-      if (r.isSr !== 1 && items.some((o) => o.c.id !== c.id && overlaps(o.p.start, o.p.end, p.start, p.end))) msgs.push("2개반 배정");
-      if (r.capacity && c.students.length > r.capacity) msgs.push(`인원초과 (${c.students.length}/${r.capacity}명)`);
+      const others = items.filter((o) => o.c.id !== c.id && overlaps(o.p.start, o.p.end, p.start, p.end));
+      // 🔗 합반 짝은 같이 수업하는 반 — 2개반 배정이 아니고, 인원은 두 반을 더해서 본다
+      if (others.some((o) => o.c.id !== c.hapbanWith)) msgs.push("2개반 배정");
+      const partner = others.find((o) => o.c.id === c.hapbanWith);
+      const count = c.students.length + (partner?.c.students.length ?? 0);
+      if (r.capacity && count > r.capacity) msgs.push(`인원초과 (${count}/${r.capacity}명${partner ? " · 합반" : ""})`);
       if (msgs.length) alerts.set(alertKey(day, r.name, p.start, c.name), msgs.join(" · "));
     }
   }
