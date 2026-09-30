@@ -484,7 +484,7 @@ export type SrPlanOpts = {
 /** 자리 계산만 (저장 안 함) — 미리보기 · 바뀌는 학생 보기 */
 export function planSrSeats(db: DatabaseSync, opts: SrPlanOpts = {}) {
   const date = opts.date ?? dateKey(new Date());
-  const { classes, blocks, partners } = srRoster(db, date);
+  const { classes, blocks, partners, memberDays } = srRoster(db, date);
   const existing = opts.base ? opts.base.map((b) => ({ ...b, manual: false })) : (
     q(db, "SELECT class_id, student_id, seat, manual FROM sr_seats").all() as {
       class_id: number;
@@ -493,7 +493,7 @@ export function planSrSeats(db: DatabaseSync, opts: SrPlanOpts = {}) {
       manual: number;
     }[]
   ).map((e) => ({ classId: e.class_id, studentId: e.student_id, seat: e.seat, manual: e.manual === 1 }));
-  return planSeats({ classes, blocks, existing, pack: opts.pack, fresh: opts.fresh && !opts.base, partners, rules: srRulesFor(date.slice(0, 7)) });
+  return planSeats({ classes, blocks, existing, pack: opts.pack, fresh: opts.fresh && !opts.base, partners, memberDays, rules: srRulesFor(date.slice(0, 7)) });
 }
 
 export function rebuildSrSeats(db: DatabaseSync, opts: SrPlanOpts = {}): { overflow: number } {

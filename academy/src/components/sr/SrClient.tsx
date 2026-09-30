@@ -15,7 +15,7 @@ import { apiGet, apiPost, errorMessage } from "@/lib/http";
 import { can, dayLimit } from "@/lib/perm";
 import { playAlarm } from "@/lib/alarm";
 import { classColorMap, LEVEL_COLOR, type ClassColor } from "@/lib/colors";
-import { LEVEL_NAME, classMoveOptions, freeSeatsBetween, movableSeatsFor, occupantsAt, seatBlocker, seatCol, studentSwapCheck, type SeatUse } from "@/lib/sr";
+import { LEVEL_NAME, classMoveOptions, freeSeatsBetween, keyBlocks, movableSeatsFor, occupantsAt, seatBlocker, seatCol, studentSwapCheck, type SeatUse } from "@/lib/sr";
 import { DAY_LABELS, addDaysKey, clockLabel, dateKey, fmtTime, minutesOfDay, monthDay, rangeLabel, weekDateOf } from "@/lib/time";
 import { teacherLabel, type SessionUser } from "@/lib/types";
 import type { SrAdhocRequest, SrClass, SrSnapshot } from "@/lib/repo/sr";
@@ -1068,7 +1068,7 @@ function DayView({
     const key = `${move.classId}|${move.studentId}`;
     const mine = snap.seats.find((x) => x.classId === move.classId && x.studentId === move.studentId)?.seat;
     const blocks = snap.blocks.filter((b) => b.classId === move.classId);
-    const movable = movableSeatsFor(snap.weekUses, blocks, key);
+    const movable = movableSeatsFor(snap.weekUses, keyBlocks(snap.weekUses, key, blocks), key);
     mark = (seat) => {
       if (seat === mine)
         return {

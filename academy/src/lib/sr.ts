@@ -70,6 +70,8 @@ export type PlanInput = {
   rules?: 1 | 2;
   /** 🔗 합반 짝 (반id → 짝 반id) — 짝이 앉은 열에 이어서 앉힌다 */
   partners?: Map<number, number>;
+  /** 반id|학생id → 그 학생이 SR에 오는 요일 (숙제반처럼 반의 SR 요일과 다를 때) */
+  memberDays?: Map<string, number[]>;
 };
 
 export type PlanResult = {
@@ -91,13 +93,16 @@ export function planSeats(input: PlanInput): PlanResult {
     classes.map((c) => [c.id, classes.filter((o) => o.id !== c.id && blocksOverlap(blocksBy.get(c.id)!, blocksBy.get(o.id)!)).map((o) => o.id)]),
   );
 
+  /** 그 학생이 실제로 오는 SR 칸 — 숙제반은 오는 요일만 (memberDays) */
+  const blocksOf = (classId: number, studentId: number) => {
+    const days = input.memberDays?.get(seatKey(classId, studentId));
+    const all = blocksBy.get(classId) ?? [];
+    return days ? all.filter((b) => days.includes(b.day)) : all;
+  };
   const seats: PlanResult["seats"] = new Map();
-  /** 그 자리를 이미 쓰는가 — 같은 반이거나 시간이 겹치는 반 */
-  const taken = (classId: number, seat: string) => {
-    for (const s of seats.values()) {
-      if (s.seat !== seat) continue;
-      if (s.classId === classId || overlapping.get(classId)?.includes(s.classId)) return true;
-    }
+  /** 그 자리를 이미 쓰는가 — blocks 시간에 그 자리에 앉은 사람이 있으면 */
+  const takenAt = (blocks: SrBlock[], seat: string) => {
+    for (const s of seats.values()) if (s.seat === seat && blocksOverlap(blocksOf(s.classId, s.studentId), blocks)) return true;
     return false;
   };
 
@@ -118,7 +123,7 @@ export function planSeats(input: PlanInput): PlanResult {
     if (input.pack && !e.manual) continue;
     const c = info.get(e.classId);
     if (!c || !c.members.includes(e.studentId) || !SEATS.includes(e.seat)) continue;
-    if (taken(e.classId, e.seat)) continue;
+    if (takenAt(blocksOf(e.classId, e.studentId), e.seat)) continue;
     seats.set(seatKey(e.classId, e.studentId), { ...e });
   }
 
@@ -138,9 +143,10 @@ export function planSeats(input: PlanInput): PlanResult {
 
   for (const c of order) {
     const todo = c.members.filter((m) => !seats.has(seatKey(c.id, m)));
+    const need = todo.flatMap((m) => blocksOf(c.id, m));
     if (todo.length === 0) continue;
     const free = (col: string) =>
-      Array.from({ length: SEAT_ROWS }, (_, i) => i + 1).filter((r) => !taken(c.id, `${col}${r}`));
+      Array.from({ length: SEAT_ROWS }, (_, i) => i + 1).filter((r) => !takenAt(need, `${col}${r}`));
     const room = (cols: string[]) => cols.reduce((n, col) => n + free(col).length, 0);
 
     let best: { cols: string[]; score: number } | null = null;
@@ -320,11 +326,20 @@ export type StudentSwapCheck = { ok: true; other: SeatUse } | { ok: false; reaso
 export function studentSwapCheck(uses: SeatUse[], blocksOf: (classId: number) => SrBlock[], key: string, seat: string): StudentSwapCheck {
   const mine = uses.find((u) => u.key === key);
   if (!mine || mine.classId === null) return { ok: false, reason: "지금 자리가 없어요" };
-  const inSeat = uses.filter((u) => u.seat === seat && u.key !== key && blockOverlap(blocksOf(mine.classId!), u));
+  const inSeat = uses.filter((u) => u.seat === seat && u.key !== key && blockOverlap(keyBlocks(uses, key, blocksOf(mine.classId!)), u));
   const keys = [...new Set(inSeat.map((u) => u.key))];
   if (keys.length !== 1) return { ok: false, reason: `${[...new Set(inSeat.map((u) => `${u.name}(${u.label})`))].join(" · ")}이(가) 써요` };
   const other = inSeat[0];
   if (other.classId === null || other.studentId === null) return { ok: false, reason: `${other.name}은(는) 임시 자리예요` };
-  const clash = uses.find((u) => u.seat === mine.seat && u.key !== key && u.key !== other.key && blockOverlap(blocksOf(other.classId!), u));
+  const clash = uses.find((u) => u.seat === mine.seat && u.key !== key && u.key !== other.key && blockOverlap(keyBlocks(uses, other.key, blocksOf(other.classId!)), u));
   return clash ? { ok: false, reason: `맞바꾸면 ${other.name}이(가) ${clash.name}(${clash.label})과(와) 겹쳐요` } : { ok: true, other };
+}
+
+/**
+ * 그 학생이 실제로 SR에 앉는 칸 — 숙제반처럼 반의 SR 요일 중 일부만 오면 그 요일만.
+ * 자리가 아직 없으면(uses 에 없음) 반의 SR 칸 전부.
+ */
+export function keyBlocks(uses: SeatUse[], key: string, classBlocks: SrBlock[]): SrBlock[] {
+  const own = uses.filter((u) => u.key === key && u.classId !== null);
+  return own.length ? own.map((u) => ({ classId: u.classId!, day: u.day, start: u.start, end: u.end })) : classBlocks;
 }

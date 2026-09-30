@@ -4,7 +4,7 @@ import { getDb } from "../db";
 import { parseDays, parseRoles } from "../auth";
 import { assert } from "../errors";
 import { planSrSeats, rebuildSrSeats, srRoster } from "../seed";
-import { SEATS, SEAT_ROWS, classMoveOptions, movableSeatsFor, seatBlocker, studentSwapCheck, seatCol, seatRow, srRulesFor, type Level, type SeatUse, type SrBlock } from "../sr";
+import { SEATS, SEAT_ROWS, classMoveOptions, movableSeatsFor, keyBlocks, seatBlocker, studentSwapCheck, seatCol, seatRow, srRulesFor, type Level, type SeatUse, type SrBlock } from "../sr";
 import { DAY_LABELS, addDaysKey, clockLabel, fmtTime, monthDay, parseDateKey, rangeLabel } from "../time";
 import { teacherLabel, type MissionRequest, type SessionType, type SessionUser } from "../types";
 import { can } from "../perm";
@@ -258,7 +258,7 @@ export function srNextMove(user: SessionUser, classId: number, studentId: number
   assert(mine, "이 학생은 다음 달 자리가 없어요.");
   assert(mine.seat !== seat, "지금 자리예요.");
   const from = mine.seat;
-  if (!movableSeatsFor(weekUses, own, key).get(seat)) {
+  if (!movableSeatsFor(weekUses, keyBlocks(weekUses, key, own), key).get(seat)) {
     mine.seat = seat;
     saveNext(user, month, seats, `${className(classId)} ${studentName(studentId)} ${from} → ${seat}`);
     return;
@@ -387,7 +387,7 @@ function assertMovable(classId: number, studentId: number, seat: string): void {
   const key = `${classId}|${studentId}`;
   const own = snap.blocks.filter((b) => b.classId === classId);
   assert(own.length > 0, "이 반은 SR을 쓰지 않아요.");
-  const blocker = movableSeatsFor(snap.weekUses, own, key).get(seat);
+  const blocker = movableSeatsFor(snap.weekUses, keyBlocks(snap.weekUses, key, own), key).get(seat);
   assert(!blocker, `${seat}에 이미 ${blocker?.name ?? ""}(${blocker?.label ?? ""} ${DAY_LABELS[blocker?.day ?? 0]}) — 다른 자리로 골라 주세요.`);
 }
 
