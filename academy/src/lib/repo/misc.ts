@@ -51,6 +51,11 @@ export function listNotices(dept: DeptFilter = "ALL", limit = 50): Notice[] {
   return rows<Notice>(db.prepare(sql).all(...args));
 }
 
+export function deleteNotice(id: number): void {
+  const r = getDb().prepare("DELETE FROM notices WHERE id = ?").run(id);
+  assert(Number(r.changes) > 0, "공지를 찾을 수 없습니다.");
+}
+
 export function createNotice(input: {
   title: string;
   body: string;

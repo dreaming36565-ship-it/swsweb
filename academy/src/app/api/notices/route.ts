@@ -1,5 +1,6 @@
 import { readJson, requirePermission, strParam, withUser } from "@/lib/api";
-import { createNotice, listNotices, type DeptFilter } from "@/lib/repo";
+import { assert } from "@/lib/errors";
+import { createNotice, deleteNotice, listNotices, type DeptFilter } from "@/lib/repo";
 
 export const GET = withUser(({ req }) => {
   const dept = (strParam(req, "dept") ?? "ALL") as DeptFilter;
@@ -17,4 +18,13 @@ export const POST = withUser(async ({ user, req }) => {
       authorId: user.id,
     }),
   };
+});
+
+/** 공지 지우기 (관리자) */
+export const DELETE = withUser(async ({ user, req }) => {
+  requirePermission(user, "notices.write");
+  const body = await readJson<{ id?: number }>(req);
+  assert(body.id, "공지를 찾을 수 없습니다.");
+  deleteNotice(body.id);
+  return null;
 });

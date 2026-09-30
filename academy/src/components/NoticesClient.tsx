@@ -3,11 +3,14 @@
 // 알림 & 공지 — 공지 목록(관리자 작성) + 내 알림 기록
 
 import { useCallback, useEffect, useState } from "react";
-import { apiGet, apiPost, errorMessage } from "@/lib/http";
+import { useConfirm } from "./ConfirmDialog";
+import { IconTrash } from "./Icons";
+import { apiDelete, apiGet, apiPost, errorMessage } from "@/lib/http";
 import { DEPARTMENTS, type Department, type Notice, type Notification, type SessionUser } from "@/lib/types";
 
 export default function NoticesClient({ user }: { user: SessionUser }) {
   const canWrite = user.roles.includes("ADMIN");
+  const confirm = useConfirm();
   const [notices, setNotices] = useState<Notice[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [title, setTitle] = useState("");
@@ -45,6 +48,18 @@ export default function NoticesClient({ user }: { user: SessionUser }) {
       setError(errorMessage(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const remove = async (n: Notice) => {
+    const yes = await confirm({ title: "공지를 지울까요?", message: n.title, confirmText: "지우기", danger: true });
+    if (!yes) return;
+    setError(null);
+    try {
+      await apiDelete("/api/notices", { id: n.id });
+      await load();
+    } catch (e) {
+      setError(errorMessage(e));
     }
   };
 
@@ -92,6 +107,9 @@ export default function NoticesClient({ user }: { user: SessionUser }) {
         </section>
       ) : null}
 
+      {error && !canWrite ? (
+        <div className="rounded-lg border border-alert bg-alert-soft px-3 py-2 text-sm font-semibold text-alert">{error}</div>
+      ) : null}
       <div className="flex w-full gap-4">
         <section className="card min-w-0 flex-1 p-5">
           <h2 className="text-base font-bold text-ink">공지</h2>
@@ -106,6 +124,11 @@ export default function NoticesClient({ user }: { user: SessionUser }) {
                     <span className="rounded border border-line bg-navy-50 px-1.5 py-0.5 text-[11px] text-muted">
                       {n.department === "ALL" ? "전체" : DEPARTMENTS[n.department as Department].dept}
                     </span>
+                    {canWrite ? (
+                      <button type="button" className="btn btn-ghost ml-auto px-2 py-1 text-alert" onClick={() => void remove(n)} aria-label="공지 지우기" title="공지 지우기">
+                        <IconTrash className="h-4 w-4" />
+                      </button>
+                    ) : null}
                   </div>
                   <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-ink">{n.body}</p>
                   <div className="mt-2 text-xs text-muted">
