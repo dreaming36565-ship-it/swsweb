@@ -530,8 +530,23 @@ function open(): DatabaseSync {
   return db;
 }
 
+/**
+ * 🔑 비상 비밀번호 초기화 — 관리자 비밀번호를 잊었을 때.
+ * Railway › Variables 에 ACADEMY_RESET_PASSWORD=안예슬 을 넣으면(저절로 다시 배포됨) 서버가 켜질 때 그 계정이
+ * 1234(로그인하면 새 비밀번호를 정함)로 돌아간다. 로그인한 뒤 변수를 꼭 지울 것 (남겨 두면 켜질 때마다 초기화).
+ */
+function emergencyReset(db: DatabaseSync): void {
+  const name = process.env.ACADEMY_RESET_PASSWORD?.trim();
+  if (!name) return;
+  const r = db.prepare("UPDATE users SET password = '1234', must_change_pw = 1, active = 1 WHERE name = ? OR login_id = ?").run(name, name);
+  console.warn(`[비상 초기화] ${name} 비밀번호를 1234로 되돌렸어요 (${r.changes}명). 로그인한 뒤 ACADEMY_RESET_PASSWORD 변수를 지우세요.`);
+}
+
 export function getDb(): DatabaseSync {
-  if (!g.__academyDb) g.__academyDb = open();
+  if (!g.__academyDb) {
+    g.__academyDb = open();
+    emergencyReset(g.__academyDb);
+  }
   return g.__academyDb;
 }
 
