@@ -1095,7 +1095,13 @@ function DayView({
           ),
         };
       return who
-        ? { tone: "block", title: `쓰는 사람: ${who.name} (${who.label} ${DAY_LABELS[who.day]} ${rangeLabel(who.start, who.end)})`, content: <span className="mt-1.5 block text-[11px]">{who.name}</span> }
+        ? { tone: "block", title: `쓰는 사람: ${who.name} (${who.label} ${DAY_LABELS[who.day]} ${rangeLabel(who.start, who.end)})`, content: (
+              <>
+                <span className="mt-1.5 block text-[11px] font-bold">{who.name}</span>
+                <span className="block truncate text-[10px]">{who.label} {DAY_LABELS[who.day]} {fmtTime(who.start)}</span>
+              </>
+            ),
+          }
         : { tone: "pick", onClick: () => onPickMove(seat), content: <span className="mt-1.5 block text-sm font-extrabold">여기로</span> };
     };
     banner = (
@@ -1105,9 +1111,16 @@ function DayView({
           <b>모든 요일·시간</b> 동안 비어 있는 자리만 분홍색이에요.
           {preview ? <span className="text-late"> 노랑 = 그 학생과 맞바꾸기</span> : null}
         </span>
-        <button type="button" className="btn px-2.5 py-1 text-xs" onClick={cancelMode}>
-          취소
-        </button>
+        <span className="flex shrink-0 gap-1.5">
+          {can(user, "sr.move") ? (
+            <button type="button" className="btn border-srpink px-2.5 py-1 text-xs text-srpink" onClick={() => onClassMove(move.classId)}>
+              ↔ {snap.classes.find((c) => c.id === move.classId)?.name} 반 전체 옮기기
+            </button>
+          ) : null}
+          <button type="button" className="btn px-2.5 py-1 text-xs" onClick={cancelMode}>
+            취소
+          </button>
+        </span>
       </div>
     );
   } else if (classMove !== null) {
@@ -1242,7 +1255,7 @@ function DayView({
           </div>
           <SeatMap occ={occ} colors={colors} mark={mark} onSeat={(o) => !o.adhocId && onStudent(o)} />
         </div>
-        <div className="w-[340px] shrink-0 space-y-3">
+        <div className="w-[400px] shrink-0 space-y-3">
           <div className="card p-4">
             <h3 className="mb-2 text-[15px] font-bold">이 요일 SR 반</h3>
             {dayClasses.length === 0 ? <p className="text-sm text-muted">없어요.</p> : null}
@@ -1286,7 +1299,7 @@ function Legend({ snap, classId, day, color, onMove }: { snap: SrSnapshot; class
   return (
     <div className="flex items-center gap-2 border-b border-line py-1.5 text-[13px] last:border-b-0">
       <span className="h-3.5 w-3.5 shrink-0 rounded border" style={{ background: color?.bg, borderColor: color?.border }} />
-      <b>{c.name}</b>
+      <b className="whitespace-nowrap">{c.name}</b>
       <span className="rounded px-1.5 text-[11px] font-extrabold text-white" style={{ background: LEVEL_COLOR[c.level] }}>
         {LEVEL_NAME[c.level][0]}
       </span>
@@ -1295,8 +1308,8 @@ function Legend({ snap, classId, day, color, onMove }: { snap: SrSnapshot; class
       </span>
       {mis}
       {onMove ? (
-        <button type="button" className="btn ml-auto shrink-0 px-1.5 py-0 text-xs" onClick={onMove} title="↔ 반 통째로 옮기기 · 맞바꾸기" aria-label="반 옮기기">
-          ↔
+        <button type="button" className="btn ml-auto shrink-0 border-srpink px-2 py-0.5 text-xs font-bold text-srpink" onClick={onMove} title="↔ 반 통째로 옮기기 · 맞바꾸기" aria-label="반 옮기기">
+          ↔ 반 옮기기
         </button>
       ) : null}
     </div>
