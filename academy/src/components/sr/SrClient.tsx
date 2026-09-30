@@ -15,10 +15,11 @@ import { apiGet, apiPost, errorMessage } from "@/lib/http";
 import { can, dayLimit } from "@/lib/perm";
 import { playAlarm } from "@/lib/alarm";
 import { classColorMap, LEVEL_COLOR, type ClassColor } from "@/lib/colors";
-import { LEVEL_NAME, movableSeatsFor, occupantsAt, seatBlocker, seatCol, type SeatUse } from "@/lib/sr";
+import { LEVEL_NAME, freeSeatsBetween, movableSeatsFor, occupantsAt, seatBlocker, seatCol, type SeatUse } from "@/lib/sr";
 import { DAY_LABELS, clockLabel, fmtTime, minutesOfDay, monthDay, rangeLabel, weekDateOf } from "@/lib/time";
 import { teacherLabel, type SessionUser } from "@/lib/types";
-import type { SrClass, SrSnapshot } from "@/lib/repo/sr";
+import type { SrAdhocRequest, SrClass, SrSnapshot } from "@/lib/repo/sr";
+import AdhocRequestPopup from "./AdhocRequestPopup";
 
 const WEEK = [1, 2, 3, 4, 5, 6, 0];
 type Move = { classId: number; studentId: number; name: string };
@@ -46,6 +47,9 @@ export default function SrClient({ user }: { user: SessionUser }) {
   const [ask, setAsk] = useState<{ seat: string } | null>(null);
   const [adhocForm, setAdhocForm] = useState(false);
   const [print, setPrint] = useState(false);
+  /** 🙋 SR 자리 요청 — 선생님 요청 창 / 데스크 배정 창 */
+  const [adhocAsk, setAdhocAsk] = useState(false);
+  const [adhocAnswer, setAdhocAnswer] = useState<SrAdhocRequest | null>(null);
   const waitCount = useRef<number | null>(null);
 
   const dayDate = weekDateOf(day);
@@ -141,6 +145,11 @@ export default function SrClient({ user }: { user: SessionUser }) {
           ))}
         </div>
         <div className="flex flex-wrap gap-1.5">
+          {requester ? (
+            <button type="button" className="btn border-srpink bg-srpink text-white hover:bg-srpink" onClick={() => setAdhocAsk(true)} disabled={!live}>
+              🙋 SR 자리 요청
+            </button>
+          ) : null}
           {desk ? (
             <button type="button" className="btn" onClick={() => setAdhocForm(true)}>
               ＋ 임시 자리 잡기
@@ -167,6 +176,7 @@ export default function SrClient({ user }: { user: SessionUser }) {
         </div>
       ) : null}
 
+      {live ? <AdhocRequestPanel user={user} snap={live} act={act} onAnswer={setAdhocAnswer} /> : null}
       {live ? <RequestPanel user={user} snap={live} act={act} /> : null}
 
       {!snapFor ? (
@@ -271,6 +281,29 @@ export default function SrClient({ user }: { user: SessionUser }) {
 
       {print && live ? <PrintSheet snap={live} onClose={() => setPrint(false)} /> : null}
 
+      {adhocAsk && live ? (
+        <AdhocAskModal
+          user={user}
+          snap={live}
+          onClose={() => setAdhocAsk(false)}
+          onSend={async (body) => {
+            if (await act({ action: "ADHOC_REQUEST", ...body }, "요청 보냄 — 데스크가 자리를 정하면 알림함으로 와요")) setAdhocAsk(false);
+          }}
+        />
+      ) : null}
+
+      {adhocAnswer ? (
+        <AdhocRequestPopup
+          request={adhocAnswer}
+          alarm={false}
+          onClose={() => setAdhocAnswer(null)}
+          onDone={() => {
+            setAdhocAnswer(null);
+            void reload();
+          }}
+        />
+      ) : null}
+
       {toast ? (
         <div className="fixed bottom-6 left-1/2 z-[90] -translate-x-1/2 rounded-xl bg-navy-900 px-5 py-2.5 text-sm font-semibold text-white print:hidden">{toast}</div>
       ) : null}
@@ -298,6 +331,147 @@ function LogPanel({ snap }: { snap: SrSnapshot }) {
         </div>
       ))}
     </div>
+  );
+}
+
+/** 🙋 SR 자리 요청 (임시 자리) — 데스크·관리자: 대기 중 → 「자리 정하기」 / 선생님: 내가 오늘 보낸 요청 */
+function AdhocRequestPanel({
+  user,
+  snap,
+  act,
+  onAnswer,
+}: {
+  user: SessionUser;
+  snap: SrSnapshot;
+  act: (b: Record<string, unknown>, ok?: string) => Promise<boolean>;
+  onAnswer: (r: SrAdhocRequest) => void;
+}) {
+  const desk = can(user, "sr.desk");
+  const now = snap.nowMin;
+  const list = desk
+    ? snap.adhocRequests.filter((r) => r.state === "WAIT" && r.end > now).reverse()
+    : snap.adhocRequests.filter((r) => r.requestedBy === user.id && r.state !== "CANCEL");
+  if (!list.length) return null;
+  const ST = { WAIT: "⏳ 대기", NO: "❌ 거절", CANCEL: "취소함" } as const;
+  return (
+    <div className="rounded-xl border border-srpink-soft bg-srpink-soft px-4 py-2.5 text-sm text-srpink">
+      <b>{desk ? `🙋 SR 자리 요청 ${list.length}건` : "🙋 내 SR 자리 요청 (오늘)"}</b>
+      {list.map((r) => (
+        <div key={r.id} className="mt-1.5 flex items-center justify-between gap-2 rounded-lg bg-white px-3 py-1.5 text-ink">
+          <span>
+            {desk ? <b>{teacherLabel(r.requestedByName)} · </b> : null}
+            <b>{r.name}</b> {r.kind} · {rangeLabel(r.start, r.end)}
+            {r.memo ? ` · ${r.memo}` : ""} <span className="text-muted">{clockLabel(r.atMin)}</span>
+          </span>
+          {desk ? (
+            <button type="button" className="btn btn-primary whitespace-nowrap px-2.5 py-0.5 text-xs" onClick={() => onAnswer(r)}>
+              자리 정하기
+            </button>
+          ) : r.state === "WAIT" ? (
+            <span className="flex items-center gap-2 whitespace-nowrap">
+              <b>{ST.WAIT}</b>
+              <button type="button" className="btn px-2 py-0.5 text-xs" onClick={() => void act({ action: "ADHOC_CANCEL", id: r.id }, "요청 취소")}>
+                요청 취소
+              </button>
+            </span>
+          ) : (
+            <b className="whitespace-nowrap">{r.state === "OK" ? `✅ ${r.seat} 배정` : ST[r.state]}</b>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 🙋 SR 자리 요청 창 (선생님) — 학생 · 종류 · 시간만 보낸다. 오늘만. 자리는 데스크가 정한다 */
+function AdhocAskModal({
+  user,
+  snap,
+  onClose,
+  onSend,
+}: {
+  user: SessionUser;
+  snap: SrSnapshot;
+  onClose: () => void;
+  onSend: (b: { name: string; kind: string; start: number; end: number; memo: string }) => void;
+}) {
+  const nowRound = Math.ceil(minutesOfDay(new Date()) / 10) * 10;
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState("보강");
+  const [start, setStart] = useState<number | null>(Math.min(nowRound, 23 * 60 - 60));
+  const [end, setEnd] = useState<number | null>(Math.min(nowRound + 60, 23 * 60 + 50));
+  const [memo, setMemo] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  // 이름 목록 — 내 반 학생 먼저
+  const byName = (list: SrClass[]) => [...new Set(list.flatMap((c) => c.members.map((m) => m.name)))].sort((a, b) => a.localeCompare(b, "ko"));
+  const names = [...new Set([...byName(snap.classes.filter((c) => c.teacherId === user.id)), ...byName(snap.classes)])];
+  const ok = start !== null && end !== null && end > start;
+  const free = ok ? freeSeatsBetween(snap.dayUses, snap.day, start, end).length : null;
+  const send = () => {
+    if (!name.trim()) return setError("학생 이름을 입력해 주세요.");
+    if (!ok) return setError("끝 시간이 시작보다 늦어야 해요.");
+    if (end! <= minutesOfDay(new Date())) return setError("이미 지난 시간이에요.");
+    onSend({ name: name.trim(), kind, start: start!, end: end!, memo });
+  };
+  return (
+    <Modal
+      open
+      width={560}
+      title="🙋 SR 자리 요청"
+      subtitle={`오늘 ${monthDay(snap.date)}(${DAY_LABELS[snap.day]}) · 데스크가 자리를 정해 줘요`}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            취소
+          </button>
+          <button type="button" className="btn btn-primary" onClick={send}>
+            요청 보내기
+          </button>
+        </>
+      }
+    >
+      <label className="label">학생</label>
+      <input className="field" list="adhoc-ask-names" placeholder="이름 입력" value={name} onChange={(e) => setName(e.target.value)} />
+      <datalist id="adhoc-ask-names">
+        {names.map((n) => (
+          <option key={n} value={n} />
+        ))}
+      </datalist>
+      <p className="mt-1 text-xs text-muted">이름을 치면 목록이 떠요 (내 반 학생 먼저). 명단에 없는 학생도 그대로 보낼 수 있어요.</p>
+      <label className="label mt-3">종류</label>
+      <div className="flex gap-1.5">
+        {["보강", "자습", "TEST", "신규TEST"].map((k) => (
+          <button key={k} type="button" className={`btn px-2.5 py-1 text-xs ${kind === k ? "btn-primary" : ""}`} onClick={() => setKind(k)}>
+            {k}
+          </button>
+        ))}
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2.5">
+        <div>
+          <label className="label">시작</label>
+          <TimeSelect value={start} onChange={setStart} />
+        </div>
+        <div>
+          <label className="label">끝</label>
+          <TimeSelect value={end} onChange={setEnd} />
+        </div>
+      </div>
+      <p className="mt-3 text-sm">
+        {free === null ? (
+          <span className="text-muted">시간을 골라 주세요</span>
+        ) : free === 0 ? (
+          <b className="text-alert">이 시간에 빈자리 없음 — 시간을 바꿔 보세요</b>
+        ) : (
+          <>
+            이 시간 내내 빈자리 <b className="text-present">{free}석</b>
+          </>
+        )}
+      </p>
+      <label className="label mt-2">메모 (선택)</label>
+      <input className="field" placeholder="예) 결석 보강" value={memo} onChange={(e) => setMemo(e.target.value)} />
+      {error ? <p className="mt-2 text-sm font-semibold text-alert">{error}</p> : null}
+    </Modal>
   );
 }
 

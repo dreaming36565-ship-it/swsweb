@@ -18,6 +18,26 @@ export const DATA_DIR = process.env.ACADEMY_DATA_DIR || process.env.RAILWAY_VOLU
 export const volumeMissing = process.env.NODE_ENV === "production" && !process.env.ACADEMY_DATA_DIR && !process.env.RAILWAY_VOLUME_MOUNT_PATH && !!process.env.RAILWAY_ENVIRONMENT;
 const DB_PATH = path.join(DATA_DIR, "academy.db");
 
+/** 🙋 SR 자리 요청 (선생님 → 데스크) — 오늘만. state: WAIT / OK(배정) / NO(거절) / CANCEL(선생님 취소). 배정하면 sr_adhoc 에 임시 자리 */
+const ADHOC_REQUESTS_SQL = `
+CREATE TABLE IF NOT EXISTS sr_adhoc_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,
+  name TEXT NOT NULL,
+  student_id INTEGER REFERENCES students(id) ON DELETE SET NULL,
+  kind TEXT NOT NULL,
+  start_min INTEGER NOT NULL,
+  end_min INTEGER NOT NULL,
+  memo TEXT,
+  requested_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  at_min INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'WAIT',
+  seat TEXT,
+  decided_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  decided_at TEXT
+);`;
+
 const SCHEMA = `
 -- roles: 권한 목록 "ADMIN,TEACHER" (한 사람이 여러 권한을 가질 수 있다). role 은 대표 권한(첫 번째).
 -- must_change_pw: 처음 비밀번호(1234)로 로그인하면 새 비밀번호를 정하게 한다.
@@ -173,6 +193,8 @@ CREATE TABLE IF NOT EXISTS sr_adhoc (
   created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL
 );
+
+${ADHOC_REQUESTS_SQL}
 
 -- 🏠 하원 (누적오답) — 그 시각부터 오늘 그 자리는 빈자리
 CREATE TABLE IF NOT EXISTS sr_leave (
@@ -483,6 +505,10 @@ const MIGRATIONS: ((db: DatabaseSync) => void)[] = [
     db.exec(`UPDATE rooms SET capacity = CASE WHEN is_sr = 1 THEN 24 WHEN name = '대강의실' THEN 18 ELSE 10 END
               WHERE capacity IS NULL`);
     applyQ4Changes(db);
+  },
+  // 6: 🙋 SR 자리 요청 (선생님 → 데스크 팝업 → 임시 자리) (2026-09-30)
+  (db) => {
+    db.exec(ADHOC_REQUESTS_SQL);
   },
 ];
 

@@ -1,6 +1,6 @@
 import { readJson, withUser } from "@/lib/api";
 import { assert } from "@/lib/errors";
-import { srAddAdhoc, srAnswer, srDeleteAdhoc, srMission, srMissionCheck, srMove, srPack, srRequest, srToggleLeave } from "@/lib/repo";
+import { srAddAdhoc, srAdhocAnswer, srAdhocCancel, srAdhocRequest, srAnswer, srDeleteAdhoc, srMission, srMissionCheck, srMove, srPack, srRequest, srToggleLeave } from "@/lib/repo";
 
 type Body =
   /** ↔ 자리 바꾸기 (데스크·관리자) */
@@ -12,6 +12,10 @@ type Body =
   /** ＋ 임시 자리 / 지우기 */
   | { action: "ADHOC"; date: string; name: string; kind: string; start: number; end: number; seat: string }
   | { action: "ADHOC_DEL"; id: number }
+  /** 🙋 SR 자리 요청 (선생님) · 취소 · 배정/거절 (데스크) */
+  | { action: "ADHOC_REQUEST"; name: string; kind: string; start: number; end: number; memo?: string }
+  | { action: "ADHOC_CANCEL"; id: number }
+  | { action: "ADHOC_ANSWER"; id: number; ok: boolean; seat?: string }
   /** 🏠 하원 (다시 누르면 취소) */
   | { action: "LEAVE"; classId: number; studentId: number }
   /** 📄 미션지 */
@@ -38,6 +42,15 @@ export const POST = withUser(async ({ user, req }) => {
       break;
     case "ADHOC_DEL":
       srDeleteAdhoc(user, b.id);
+      break;
+    case "ADHOC_REQUEST":
+      srAdhocRequest(user, b);
+      break;
+    case "ADHOC_CANCEL":
+      srAdhocCancel(user, b.id);
+      break;
+    case "ADHOC_ANSWER":
+      srAdhocAnswer(user, b.id, b.ok, b.seat);
       break;
     case "LEAVE":
       srToggleLeave(user, b.classId, b.studentId);

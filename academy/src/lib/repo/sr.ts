@@ -1,10 +1,11 @@
 // ★ 서버 전용. SR 자리 — 주간 자리 · 실시간 현황 · 자리 바꾸기/요청 · 임시 자리 · 하원 · 미션지 · 월초 정리.
 
 import { getDb } from "../db";
+import { parseDays, parseRoles } from "../auth";
 import { assert } from "../errors";
 import { rebuildSrSeats, srRoster } from "../seed";
 import { SEATS, movableSeatsFor, seatBlocker, type Level, type SeatUse, type SrBlock } from "../sr";
-import { DAY_LABELS, clockLabel, fmtTime, parseDateKey } from "../time";
+import { DAY_LABELS, clockLabel, fmtTime, parseDateKey, rangeLabel } from "../time";
 import { teacherLabel, type MissionRequest, type SessionType, type SessionUser } from "../types";
 import { can } from "../perm";
 import { getSetting, notify, nowIso, nowMin, row, rows, setSetting, today, transaction, userIdsWithRole } from "./base";
@@ -51,6 +52,23 @@ export type SrSeatRequest = {
 
 export type SrAdhoc = { id: number; date: string; name: string; studentId: number | null; kind: string; start: number; end: number; seat: string };
 
+/** 🙋 SR 자리 요청 (선생님 → 데스크) — 오늘만. 배정하면 임시 자리가 된다 */
+export type SrAdhocRequest = {
+  id: number;
+  date: string;
+  name: string;
+  kind: string;
+  start: number;
+  end: number;
+  memo: string | null;
+  requestedBy: number | null;
+  requestedByName: string | null;
+  atMin: number;
+  state: "WAIT" | "OK" | "NO" | "CANCEL";
+  seat: string | null;
+  decidedByName: string | null;
+};
+
 export type SrSnapshot = {
   date: string;
   day: number;
@@ -71,6 +89,8 @@ export type SrSnapshot = {
   absent: { classId: number; studentId: number; reason: string }[];
   missions: SrMission[];
   requests: SrSeatRequest[];
+  /** 🙋 오늘 SR 자리 요청 (임시 자리) */
+  adhocRequests: SrAdhocRequest[];
   log: { date: string; atMin: number; text: string }[];
   overflow: { classId: number; studentId: number }[];
   /** 요일마다 수업이 있는 모든 반 — 반 색을 시간표와 똑같이 맞추려고 */
@@ -212,7 +232,8 @@ export function srSnapshot(date: string): SrSnapshot {
 
   const dayClassIds: Record<number, number[]> = {};
   for (const s of listAllSessions()) (dayClassIds[s.dayOfWeek] ??= []).push(s.classId);
-  return { date, day, nowMin: nowMin(), classes, blocks, dayBlocks, seats, weekUses, dayUses, adhoc, leave, absent, missions, requests, log, overflow, dayClassIds };
+  const adhocRequests = adhocRequestsOn(today());
+  return { date, day, nowMin: nowMin(), classes, blocks, dayBlocks, seats, weekUses, dayUses, adhoc, leave, absent, missions, requests, adhocRequests, log, overflow, dayClassIds };
 }
 
 function addLog(date: string, text: string): void {
@@ -329,6 +350,98 @@ export function srAddAdhoc(
 export function srDeleteAdhoc(user: SessionUser, id: number): void {
   assert(can(user, "sr.desk"), "임시 자리는 데스크·관리자만 지울 수 있어요.");
   getDb().prepare("DELETE FROM sr_adhoc WHERE id = ?").run(id);
+}
+
+/* ------------------------------------------------------------ 🙋 SR 자리 요청 (임시 자리) */
+
+function adhocRequestsOn(date: string): SrAdhocRequest[] {
+  return rows<SrAdhocRequest>(
+    getDb()
+      .prepare(
+        `SELECT q.id, q.date, q.name, q.kind, q.start_min AS start, q.end_min AS end, q.memo, q.requested_by AS requestedBy,
+                u.name AS requestedByName, q.at_min AS atMin, q.state, q.seat, d.name AS decidedByName
+           FROM sr_adhoc_requests q LEFT JOIN users u ON u.id = q.requested_by LEFT JOIN users d ON d.id = q.decided_by
+          WHERE q.date = ? ORDER BY q.id DESC`,
+      )
+      .all(date),
+  );
+}
+
+const adhocWhat = (r: { name: string; kind: string; start_min: number; end_min: number }) => `${r.name} ${r.kind} · ${rangeLabel(r.start_min, r.end_min)}`;
+
+/** 🙋 SR 자리 요청 (선생님) — 학생 · 종류 · 시간만. 자리는 데스크가 정한다 (오늘만) */
+export function srAdhocRequest(user: SessionUser, input: { name: string; kind: string; start: number; end: number; memo?: string | null }): void {
+  assert(can(user, "sr.request"), "SR 자리 요청을 보낼 수 없어요.");
+  const name = input.name?.trim();
+  assert(name, "학생 이름을 입력해 주세요.");
+  assert(Number.isInteger(input.start) && Number.isInteger(input.end) && input.end > input.start, "끝 시간이 시작보다 늦어야 해요.");
+  assert(input.end > nowMin(), "이미 지난 시간이에요. 시간을 다시 골라 주세요.");
+  const db = getDb();
+  const sid = row<{ id: number }>(db.prepare("SELECT id FROM students WHERE name = ? AND active = 1 LIMIT 1").get(name))?.id ?? null;
+  db.prepare(
+    `INSERT INTO sr_adhoc_requests (date, name, student_id, kind, start_min, end_min, memo, requested_by, created_at, at_min, state)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'WAIT')`,
+  ).run(today(), name, sid, input.kind?.trim() || "보강", input.start, input.end, input.memo?.trim() || null, user.id, nowIso(), nowMin());
+}
+
+/** 요청 취소 (보낸 선생님 · 배정 전에만) */
+export function srAdhocCancel(user: SessionUser, id: number): void {
+  const r = row<{ requested_by: number | null; state: string }>(getDb().prepare("SELECT requested_by, state FROM sr_adhoc_requests WHERE id = ?").get(id));
+  assert(r, "요청을 찾을 수 없어요.");
+  assert(r.requested_by === user.id, "내가 보낸 요청만 취소할 수 있어요.");
+  assert(r.state === "WAIT", "이미 처리된 요청이에요.");
+  getDb().prepare("UPDATE sr_adhoc_requests SET state = 'CANCEL', decided_at = ? WHERE id = ?").run(nowIso(), id);
+}
+
+/** 배정 / 거절 (데스크 · 관리자) — 배정하면 그 자리가 오늘 임시 자리로. 결과는 선생님 알림함으로 */
+export function srAdhocAnswer(user: SessionUser, id: number, ok: boolean, seat?: string | null): void {
+  assert(can(user, "sr.desk"), "SR 자리 배정은 데스크·관리자만 해요.");
+  const db = getDb();
+  const r = row<{ id: number; date: string; name: string; student_id: number | null; kind: string; start_min: number; end_min: number; state: string; requested_by: number | null }>(
+    db.prepare("SELECT * FROM sr_adhoc_requests WHERE id = ?").get(id),
+  );
+  assert(r, "요청을 찾을 수 없어요.");
+  assert(r.state === "WAIT", r.state === "CANCEL" ? "선생님이 취소한 요청이에요." : "이미 처리된 요청이에요.");
+  const req = row<{ name: string }>(db.prepare("SELECT name FROM users WHERE id = ?").get(r.requested_by ?? 0));
+  transaction(() => {
+    if (ok) {
+      assert(seat && SEATS.includes(seat), "자리를 골라 주세요.");
+      const snap = srSnapshot(r.date);
+      const blocker = seatBlocker(snap.dayUses, snap.day, seat, r.start_min, r.end_min);
+      assert(!blocker, `${seat}은(는) ${blocker?.name ?? ""}(${blocker?.label ?? ""} ${rangeLabel(blocker?.start ?? 0, blocker?.end ?? 0)})이(가) 써요. 다른 자리를 골라 주세요.`);
+      db.prepare("INSERT INTO sr_adhoc (date, name, student_id, kind, start_min, end_min, seat, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+        r.date, r.name, r.student_id, r.kind, r.start_min, r.end_min, seat, user.id, nowIso(),
+      );
+    }
+    db.prepare("UPDATE sr_adhoc_requests SET state = ?, seat = ?, decided_by = ?, decided_at = ? WHERE id = ?").run(ok ? "OK" : "NO", ok ? seat! : null, user.id, nowIso(), id);
+    addLog(r.date, `${who(user)} ${ok ? `배정 · 📌 ${r.name} ${r.kind} ${seat}` : `거절 · ${r.name} ${r.kind}`} (${teacherLabel(req?.name)} 요청)`);
+  });
+  if (r.requested_by)
+    notify(
+      r.requested_by,
+      "SR_ADHOC_ANSWER",
+      ok ? "✅ SR 자리 배정" : "❌ SR 자리 요청 거절",
+      ok ? `${r.name} ${seat} · ${rangeLabel(r.start_min, r.end_min)} · ${r.kind}` : adhocWhat(r),
+      "/sr",
+    );
+}
+
+/**
+ * 팝업으로 받을 사람 — 오늘 근무하는 데스크. 오늘 근무하는 데스크가 없으면 관리자.
+ * 받는 사람이 아니어도 데스크·관리자는 SR 관리 위쪽 줄에서 배정할 수 있다.
+ */
+export function adhocRequestsForPopup(user: SessionUser): SrAdhocRequest[] {
+  if (!can(user, "sr.desk")) return [];
+  const day = new Date().getDay();
+  const deskToday = rows<{ id: number; role: string; roles: string; employment: string; work_days: string }>(
+    getDb().prepare("SELECT id, role, roles, employment, work_days FROM users WHERE active = 1").all(),
+  ).filter((u) => parseRoles(u.roles, u.role).includes("DESK") && (u.employment !== "PART" || parseDays(u.work_days).includes(day)));
+  const mine = deskToday.length ? deskToday.some((u) => u.id === user.id) : user.roles.includes("ADMIN");
+  if (!mine) return [];
+  const now = nowMin();
+  return adhocRequestsOn(today())
+    .filter((r) => r.state === "WAIT" && r.end > now)
+    .reverse();
 }
 
 /** 🏠 하원 (누적오답) — 다시 누르면 취소 */

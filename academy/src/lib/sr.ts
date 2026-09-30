@@ -196,6 +196,16 @@ export function seatBlocker(uses: SeatUse[], day: number, seat: string, start: n
   );
 }
 
+/**
+ * 그 시간 내내 비어 있는 자리 — 앞자리(1번 줄, 칠판 앞)부터, 같은 줄은 A → D.
+ * 🙋 SR 자리 요청의 추천 자리는 이 목록의 첫 번째.
+ */
+export function freeSeatsBetween(uses: SeatUse[], day: number, start: number, end: number): string[] {
+  const out: string[] = [];
+  for (let r = 1; r <= SEAT_ROWS; r++) for (const c of SEAT_COLS) if (!seatBlocker(uses, day, `${c}${r}`, start, end)) out.push(`${c}${r}`);
+  return out;
+}
+
 /** 그 시각에 앉아 있는 사람 { 자리: 사용 } */
 export function occupantsAt(uses: SeatUse[], day: number, minute: number): Map<string, SeatUse> {
   const out = new Map<string, SeatUse>();
