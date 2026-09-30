@@ -2,7 +2,7 @@
 
 import { getDb } from "../db";
 import { assert } from "../errors";
-import { parseRoles } from "../auth";
+import { checkPassword, hashPassword, parseDays, parseRoles } from "../auth";
 import { bookFull, parseBook } from "../books";
 import { ROLES, type Book, type Role, type Room, type StaffUser } from "../types";
 import { nowIso, row, rows } from "./base";
@@ -68,7 +68,17 @@ export function moveRoom(id: number, move: -1 | 1): void {
 
 /* -------------------------------------------------------------------- 계정 */
 
-type UserDbRow = { id: number; loginId: string; name: string; role: string; roles: string; department: string; active: number };
+type UserDbRow = {
+  id: number;
+  loginId: string;
+  name: string;
+  role: string;
+  roles: string;
+  department: string;
+  active: number;
+  employment: string;
+  workDays: string;
+};
 
 const toStaff = (u: UserDbRow): StaffUser => ({
   id: u.id,
@@ -77,12 +87,16 @@ const toStaff = (u: UserDbRow): StaffUser => ({
   roles: parseRoles(u.roles, u.role),
   department: u.department as StaffUser["department"],
   active: u.active === 1 ? 1 : 0,
+  partTime: u.employment === "PART",
+  workDays: parseDays(u.workDays),
 });
 
 export function listUsers(): StaffUser[] {
   return rows<UserDbRow>(
     getDb()
-      .prepare("SELECT id, login_id AS loginId, name, role, roles, department, active FROM users ORDER BY id")
+      .prepare(
+        "SELECT id, login_id AS loginId, name, role, roles, department, active, employment, work_days AS workDays FROM users ORDER BY id",
+      )
       .all(),
   ).map(toStaff);
 }
@@ -118,7 +132,10 @@ export function createUser(input: { name: string; roles: string[]; department: s
   return Number(r.lastInsertRowid);
 }
 
-export function updateUser(id: number, input: { name?: string; roles?: string[]; department?: string; active?: number }): void {
+export function updateUser(
+  id: number,
+  input: { name?: string; roles?: string[]; department?: string; active?: number; partTime?: boolean; workDays?: number[] },
+): void {
   const db = getDb();
   const cur = listUsers().find((u) => u.id === id);
   assert(cur, "계정을 찾을 수 없습니다.");
@@ -140,6 +157,12 @@ export function updateUser(id: number, input: { name?: string; roles?: string[];
   }
   if (input.department !== undefined)
     db.prepare("UPDATE users SET department = ? WHERE id = ?").run(input.department === "HIGH" ? "HIGH" : "ELEM", id);
+  // 근무 — 정직원 / 알바 + 근무 요일 (알바는 근무 요일의 시간표 · SR만 본다)
+  if (input.partTime !== undefined) db.prepare("UPDATE users SET employment = ? WHERE id = ?").run(input.partTime ? "PART" : "FULL", id);
+  if (input.workDays !== undefined) {
+    const days = parseDays(input.workDays.join(",")).sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
+    db.prepare("UPDATE users SET work_days = ? WHERE id = ?").run(days.join(","), id);
+  }
   if (input.active !== undefined) {
     if (!input.active && cur.roles.includes("ADMIN")) assertAdminRemains(id);
     db.prepare("UPDATE users SET active = ? WHERE id = ?").run(input.active ? 1 : 0, id);
@@ -152,6 +175,14 @@ export function resetPassword(id: number): void {
   assert(Number(r.changes) > 0, "계정을 찾을 수 없습니다.");
 }
 
+/** 관리자가 비밀번호를 정해 준다 — 그 비밀번호로 바로 쓴다(바꾸라고 하지 않음). 본인은 설정에서 언제든 바꿀 수 있다 */
+export function setPasswordByAdmin(id: number, pw: string): void {
+  assert(pw.length >= 4, "비밀번호는 4자 이상이어야 해요.");
+  assert(pw !== "1234", "1234는 처음 비밀번호라 쓸 수 없어요. 다른 비밀번호로 정해 주세요.");
+  const r = getDb().prepare("UPDATE users SET password = ?, must_change_pw = 0 WHERE id = ?").run(hashPassword(pw), id);
+  assert(Number(r.changes) > 0, "계정을 찾을 수 없습니다.");
+}
+
 /** 내 비밀번호 바꾸기 */
 export function changePassword(userId: number, next: string, current?: string | null): void {
   const db = getDb();
@@ -160,10 +191,10 @@ export function changePassword(userId: number, next: string, current?: string | 
   );
   assert(u, "계정을 찾을 수 없습니다.");
   // 처음 비밀번호를 바꾸는 중이 아니면 지금 비밀번호를 확인한다
-  if (u.must_change_pw !== 1) assert(current === u.password, "지금 비밀번호가 맞지 않아요.");
+  if (u.must_change_pw !== 1) assert(current && checkPassword(u.password, current), "지금 비밀번호가 맞지 않아요.");
   assert(next.length >= 4, "새 비밀번호는 4자 이상이어야 해요.");
   assert(next !== "1234", "처음 비밀번호(1234)와 다른 비밀번호로 정해 주세요.");
-  db.prepare("UPDATE users SET password = ?, must_change_pw = 0 WHERE id = ?").run(next, userId);
+  db.prepare("UPDATE users SET password = ?, must_change_pw = 0 WHERE id = ?").run(hashPassword(next), userId);
 }
 
 export function deleteUser(id: number, actingUserId: number): void {

@@ -90,6 +90,10 @@ export type SessionUser = {
   department: Department;
   /** 처음 비밀번호로 로그인했으면 새 비밀번호를 정해야 한다 */
   mustChangePw: boolean;
+  /** 알바 — 근무 요일(workDays)의 시간표 · SR만 본다 */
+  partTime: boolean;
+  /** 근무 요일 (0=일 … 6=토) — 알바만 쓴다 */
+  workDays: number[];
 };
 
 export type Room = { id: number; name: string; orderNo: number; isSr: 0 | 1; capacity: number | null };
@@ -180,7 +184,18 @@ export type ClassModel = {
   srOnly: boolean;
   /** 🔗 합반 — 같은 교실 · 같은 선생님과 같이 수업하는 반 (겹침 경고 없음, 출결·SR은 각자 시간) */
   hapbanWith: number | null;
+  /** 반레벨 변경 — 반 이름이 바뀌어 자동 비교가 안 되므로 반 편집에서 체크 (반이름 보라 바탕) */
+  levelChanged: boolean;
+  /** 교체 표시 직접 입력 — null = 자동(지난 분기 저장본과 비교), N = 없음 */
+  changeKind: ChangeKind | "N" | null;
+  changeNote: string | null;
+  /** 실제로 보여줄 교체 (직접 입력이 먼저, 없으면 자동 비교) */
+  change: { kind: ChangeKind; note: string } | null;
 };
+
+/** 교체 — T 담임교체 · H 시간교체 · B 담임+시간교체 */
+export type ChangeKind = "T" | "H" | "B";
+export const CHANGE_LABEL: Record<ChangeKind, string> = { T: "담임교체", H: "시간교체", B: "담임+시간교체" };
 
 export type Book = { id: number; level: string; grade: string; name: string; createdAt: string };
 
@@ -382,4 +397,6 @@ export type StaffUser = {
   roles: Role[];
   department: Department;
   active: 0 | 1;
+  partTime: boolean;
+  workDays: number[];
 };

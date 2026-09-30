@@ -53,6 +53,13 @@
   --color-st-done: #1d4ed8;
   --color-st-carry: #374151;
 
+  /* 운영 시간표 — 교체 색 줄(파스텔) · 반레벨 변경(반이름 보라 바탕) */
+  --color-chg-t: #ffd8a8;
+  --color-chg-h: #fff1a8;
+  --color-chg-b: #bdf0d2;
+  --color-chg-ink: #3b2a00;
+  --color-lvl: #7c3aed;
+
   --font-sans:
     Pretendard, "Pretendard Variable", -apple-system, BlinkMacSystemFont, "Malgun Gothic",
     "맑은 고딕", system-ui, sans-serif;

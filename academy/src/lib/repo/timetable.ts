@@ -8,6 +8,7 @@ import { detectConflicts, type ConflictSession } from "../conflicts";
 import { rangeLabel, weekDateOf } from "../time";
 import type {
   Book,
+  ChangeKind,
   ClassModel,
   ClassPart,
   ClassRow,
@@ -19,7 +20,7 @@ import type {
   TempSwap,
   TimetableSession,
 } from "../types";
-import { deptWhere, nowIso, row, rows, today, transaction, type DeptFilter } from "./base";
+import { deptWhere, getSetting, nowIso, row, rows, setSetting, today, transaction, type DeptFilter } from "./base";
 import { listBooks, listRooms } from "./staff";
 
 /** 반·학생·시간이 바뀌면 SR 주간 자리를 다시 맞춘다 (지금 자리는 그대로, 새 학생만 앉힘) */
@@ -264,6 +265,12 @@ export function listClassModels(): ClassModel[] {
   // 숙제반은 반 명단 대신 이번 달 신청 + 강제 참석 학생
   const hwMembers = new Map(srRoster(db).classes.map((c) => [c.id, c.members]));
   const names = new Map(rows<{ id: number; name: string }>(db.prepare("SELECT id, name FROM students").all()).map((x) => [x.id, x.name]));
+  const ops = new Map(
+    rows<{ id: number; level_changed: number; change_kind: string | null; change_note: string | null }>(
+      db.prepare("SELECT id, level_changed, change_kind, change_note FROM classes").all(),
+    ).map((x) => [x.id, x]),
+  );
+  const snapshot = getSnapshot();
   const out: ClassModel[] = [];
   for (const c of listClasses("ALL")) {
     const ss = sessions.filter((s) => s.classId === c.id);
@@ -330,9 +337,73 @@ export function listClassModels(): ClassModel[] {
       parts,
       srOnly,
       hapbanWith: c.hapbanWith,
+      levelChanged: ops.get(c.id)?.level_changed === 1,
+      changeKind: (ops.get(c.id)?.change_kind as ChangeKind | "N" | null) ?? null,
+      changeNote: ops.get(c.id)?.change_note ?? null,
+      change: null,
     });
   }
+  for (const m of out) m.change = changeOf(m, snapshot);
   return out;
+}
+
+/* ------------------------------------------------------------ 교체 (지난 분기 저장본과 비교) */
+
+/** 분기 마감 저장본 — 반 이름 → 담당 · 수업 시간. 다음 분기 시간표와 반 이름으로 비교한다 */
+export type TermSnapshot = { label: string; savedAt: string; classes: Record<string, { teacher: string | null; sched: string }> };
+
+const SNAPSHOT_KEY = "tt_snapshot";
+
+export function getSnapshot(): TermSnapshot | null {
+  const raw = getSetting(SNAPSHOT_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as TermSnapshot;
+  } catch {
+    return null;
+  }
+}
+
+/** 수업 칸의 담당 (없으면 반 담당) */
+const mainTeacherName = (c: ClassModel) => c.parts.find((p) => p.kind === "CLASS")?.teacherName ?? c.teacherName;
+
+/** 수업 시간 모양 — "135@880-980;6@600-700" (수업 칸만, SR만 쓰는 반은 SR 칸) */
+function schedKey(c: ClassModel): string {
+  const main = c.parts.filter((p) => p.kind === "CLASS");
+  return (main.length ? main : c.parts)
+    .map((p) => `${[...p.days].sort().join("")}@${p.start}-${p.end}`)
+    .sort()
+    .join(";");
+}
+
+/** 보여줄 교체 — 직접 입력이 먼저(N = 없음), 없으면 저장본과 비교: 담당이 바뀌면 담임교체, 시간이 바뀌면 시간교체 */
+function changeOf(c: ClassModel, snap: TermSnapshot | null): ClassModel["change"] {
+  if (c.changeKind === "N") return null;
+  if (c.changeKind) return { kind: c.changeKind, note: c.changeNote ?? "" };
+  const prev = snap?.classes[c.name];
+  if (!snap || !prev) return null;
+  const teacher = (prev.teacher ?? null) !== (mainTeacherName(c) ?? null);
+  const time = prev.sched !== schedKey(c);
+  if (!teacher && !time) return null;
+  return {
+    kind: teacher && time ? "B" : teacher ? "T" : "H",
+    note: teacher && prev.teacher ? `${snap.label} ${prev.teacher}T` : "",
+  };
+}
+
+/**
+ * 📸 분기 마감 저장 — 지금 시간표를 「지난 분기」로 저장해 두고, 직접 넣은 교체 표시 · 반레벨 변경을 지운다.
+ * 다음 분기 시간표를 고치면 반 이름으로 비교해 담임교체 · 시간교체가 저절로 붙는다.
+ */
+export function saveSnapshot(label: string): void {
+  const name = label.trim();
+  assert(name, "저장본 이름을 넣어 주세요. 예) 4분기");
+  const classes: TermSnapshot["classes"] = {};
+  for (const c of listClassModels()) classes[c.name] = { teacher: mainTeacherName(c) ?? null, sched: schedKey(c) };
+  transaction(() => {
+    setSetting(SNAPSHOT_KEY, JSON.stringify({ label: name, savedAt: nowIso(), classes } satisfies TermSnapshot));
+    getDb().exec("UPDATE classes SET change_kind = NULL, change_note = NULL, level_changed = 0");
+  });
 }
 
 export type ClassInput = {
@@ -347,6 +418,10 @@ export type ClassInput = {
   students: string[];
   /** 🔗 합반 상대 반 (없으면 null) */
   hapbanWith?: number | null;
+  /** 반레벨 변경 · 교체 표시 직접 입력 (null = 자동, N = 없음) */
+  levelChanged?: boolean;
+  changeKind?: string | null;
+  changeNote?: string | null;
 };
 
 const typeForGrade = (grade: string): SessionType =>
@@ -470,6 +545,12 @@ export function saveClass(input: ClassInput): number {
     for (const e of existing) if (!used.has(e.id)) del.run(e.id);
     syncRosterNoRefresh(classId, input.students, department);
     if (input.hapbanWith !== undefined) setHapban(classId, input.hapbanWith ?? null);
+    if (input.levelChanged !== undefined) db.prepare("UPDATE classes SET level_changed = ? WHERE id = ?").run(input.levelChanged ? 1 : 0, classId);
+    if (input.changeKind !== undefined) {
+      const kind = ["N", "T", "H", "B"].includes(input.changeKind ?? "") ? input.changeKind : null;
+      const note = kind && kind !== "N" ? (input.changeNote ?? "").trim() || null : null;
+      db.prepare("UPDATE classes SET change_kind = ?, change_note = ? WHERE id = ?").run(kind, note, classId);
+    }
     refreshSr();
     return classId;
   });

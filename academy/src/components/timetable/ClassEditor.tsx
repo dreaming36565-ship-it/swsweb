@@ -9,7 +9,7 @@ import TimeSelect from "../TimeSelect";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
 import { bookFull, bookShort } from "@/lib/books";
 import { DAY_LABELS, rangeLabel } from "@/lib/time";
-import { teacherLabel, type Book, type ClassPart } from "@/lib/types";
+import { CHANGE_LABEL, teacherLabel, type Book, type ClassPart } from "@/lib/types";
 import { GRADE_ORDER, WEEK, weekOrder } from "./model";
 import type { Ctx } from "./TimetableClient";
 
@@ -26,6 +26,10 @@ type Draft = {
   students: string[];
   /** 🔗 합반 상대 반 */
   hapbanWith: number | null;
+  /** 반레벨 변경 · 교체 표시 (""= 자동, N = 없음, T/H/B = 직접) */
+  levelChanged: boolean;
+  changeKind: string;
+  changeNote: string;
 };
 
 const sortDays = (d: number[]) => [...new Set(d)].sort((a, b) => weekOrder(a) - weekOrder(b));
@@ -49,6 +53,9 @@ export default function ClassEditor({ ctx, classId, onClose }: { ctx: Ctx; class
         parts: c.parts.map((p) => ({ ...p })),
         students: c.students.map((s) => s.name),
         hapbanWith: c.hapbanWith,
+        levelChanged: c.levelChanged,
+        changeKind: c.changeKind ?? "",
+        changeNote: c.changeNote ?? "",
       };
     return {
       name: "",
@@ -63,6 +70,9 @@ export default function ClassEditor({ ctx, classId, onClose }: { ctx: Ctx; class
       ],
       students: [],
       hapbanWith: null,
+      levelChanged: false,
+      changeKind: "",
+      changeNote: "",
     };
   });
   const [error, setError] = useState<string | null>(null);
@@ -105,6 +115,9 @@ export default function ClassEditor({ ctx, classId, onClose }: { ctx: Ctx; class
         parts: d.parts.map((p) => ({ ...p, teacherId: p.kind === "SR" ? null : p.teacherId })),
         students: d.students,
         hapbanWith: d.hapbanWith,
+        levelChanged: d.levelChanged,
+        changeKind: d.changeKind || null,
+        changeNote: d.changeNote,
       });
       await ctx.reload();
       onClose();
@@ -364,6 +377,33 @@ export default function ClassEditor({ ctx, classId, onClose }: { ctx: Ctx; class
         ) : d.hapbanWith && hapbanOptions.some((o) => o.c.id === d.hapbanWith) ? (
           <p className="mt-1.5 text-sm font-bold text-ok">✔ {hapbanCur?.name}과(와) 합반 — 겹침 경고 없음</p>
         ) : null}
+      </div>
+
+      <div className="mt-3 rounded-xl border border-line bg-navy-50 p-3">
+        <label className="label">운영 시간표 표시</label>
+        <label className="inline-flex items-center gap-1.5 text-sm font-semibold">
+          <input type="checkbox" className="h-[18px] w-[18px]" checked={d.levelChanged} onChange={(e) => setD({ ...d, levelChanged: e.target.checked })} />
+          <span className="rounded-md bg-lvl px-1.5 text-white">반레벨 변경</span> (반 이름이 바뀐 반 — 반이름을 보라 바탕으로)
+        </label>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+          교체 색 줄
+          <select className="field w-44 py-1" value={d.changeKind} onChange={(e) => setD({ ...d, changeKind: e.target.value })}>
+            <option value="">자동 (지난 분기와 비교)</option>
+            <option value="N">없음</option>
+            {(["T", "H", "B"] as const).map((k) => (
+              <option key={k} value={k}>
+                {CHANGE_LABEL[k]}
+              </option>
+            ))}
+          </select>
+          {d.changeKind && d.changeKind !== "N" ? (
+            <input className="field w-56 py-1" placeholder="예) 3분기 희주T+나영T" value={d.changeNote} onChange={(e) => setD({ ...d, changeNote: e.target.value })} />
+          ) : null}
+        </div>
+        <p className="mt-1 text-xs text-muted">
+          「자동」이면 「📸 분기 마감 저장」해 둔 지난 분기 시간표와 반 이름으로 비교해요 — 담당이 바뀌면 담임교체, 시간이 바뀌면 시간교체.
+          {ctx.data.snapshot ? ` 지금 비교 기준: ${ctx.data.snapshot.label} 저장본.` : " 아직 저장본이 없어요."}
+        </p>
       </div>
 
       <div className="mt-3">

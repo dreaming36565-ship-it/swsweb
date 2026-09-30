@@ -12,7 +12,7 @@ import { IconPrinter } from "../Icons";
 import SeatMap, { type SeatMark } from "./SeatMap";
 import PrintSheet from "./PrintSheet";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
-import { can } from "@/lib/perm";
+import { can, dayLimit } from "@/lib/perm";
 import { playAlarm } from "@/lib/alarm";
 import { classColorMap, LEVEL_COLOR, type ClassColor } from "@/lib/colors";
 import { LEVEL_NAME, movableSeatsFor, occupantsAt, seatBlocker, seatCol, type SeatUse } from "@/lib/sr";
@@ -33,7 +33,9 @@ export default function SrClient({ user }: { user: SessionUser }) {
   const [view, setView] = useState<"live" | "day">("live");
   const [live, setLive] = useState<SrSnapshot | null>(null);
   const [daySnap, setDaySnap] = useState<SrSnapshot | null>(null);
-  const [day, setDay] = useState(() => new Date().getDay());
+  // 알바 데스크는 근무 요일만
+  const limit = dayLimit(user);
+  const [day, setDay] = useState(() => (limit && !limit.includes(new Date().getDay()) ? (limit[0] ?? new Date().getDay()) : new Date().getDay()));
   const [slot, setSlot] = useState(0);
   const [now, setNow] = useState(() => minutesOfDay(new Date()));
   const [error, setError] = useState<string | null>(null);
@@ -660,7 +662,14 @@ function DayView({
       {monthEnd ? <div className="rounded-xl border border-late bg-late-soft px-4 py-2.5 text-sm font-bold text-late">📅 다음 달 1일에 빈자리를 앞으로 당겨 정리해요 (월초 자리 정리).</div> : null}
       <div className="flex flex-wrap gap-1.5">
         {WEEK.map((x) => (
-          <button key={x} type="button" className={`btn px-3 ${day === x ? "btn-primary" : ""}`} onClick={() => setDay(x)}>
+          <button
+            key={x}
+            type="button"
+            disabled={!!dayLimit(user) && !dayLimit(user)!.includes(x)}
+            className={`btn px-3 ${day === x ? "btn-primary" : ""} ${dayLimit(user) && !dayLimit(user)!.includes(x) ? "opacity-40" : ""}`}
+            onClick={() => setDay(x)}
+          >
+            {dayLimit(user) && !dayLimit(user)!.includes(x) ? "🔒 " : ""}
             {DAY_LABELS[x]}
             <span className="text-[11px] font-normal opacity-70">{monthDay(weekDateOf(x))}</span>
           </button>

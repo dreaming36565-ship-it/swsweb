@@ -9,9 +9,14 @@
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { seedDemo, importLocalRecords, rebuildSrSeats, upgradeHomeworkSlots } from "./seed";
+import { seedDemo, importLocalRecords, rebuildSrSeats, upgradeHomeworkSlots, applyQ4Changes } from "./seed";
 
-const DB_PATH = path.join(process.cwd(), "data", "academy.db");
+// 배포 서버(Railway)는 볼륨(서버를 다시 올려도 지워지지 않는 저장 공간)에 저장한다.
+// 볼륨을 붙이면 Railway 가 RAILWAY_VOLUME_MOUNT_PATH 를 알려준다. 따로 정하려면 ACADEMY_DATA_DIR.
+export const DATA_DIR = process.env.ACADEMY_DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(process.cwd(), "data");
+/** 배포 서버인데 볼륨이 없으면 서버를 다시 올릴 때마다 자료가 지워진다 — 설정 화면에 경고 */
+export const volumeMissing = process.env.NODE_ENV === "production" && !process.env.ACADEMY_DATA_DIR && !process.env.RAILWAY_VOLUME_MOUNT_PATH && !!process.env.RAILWAY_ENVIRONMENT;
+const DB_PATH = path.join(DATA_DIR, "academy.db");
 
 const SCHEMA = `
 -- roles: 권한 목록 "ADMIN,TEACHER" (한 사람이 여러 권한을 가질 수 있다). role 은 대표 권한(첫 번째).
@@ -25,7 +30,10 @@ CREATE TABLE IF NOT EXISTS users (
   roles TEXT NOT NULL DEFAULT '',
   department TEXT NOT NULL,
   active INTEGER NOT NULL DEFAULT 1,
-  must_change_pw INTEGER NOT NULL DEFAULT 0
+  must_change_pw INTEGER NOT NULL DEFAULT 0,
+  -- 근무: FULL 정직원 / PART 알바. 알바는 work_days("1,3,5") 요일의 시간표 · SR만 본다
+  employment TEXT NOT NULL DEFAULT 'FULL',
+  work_days TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS rooms (
@@ -47,7 +55,11 @@ CREATE TABLE IF NOT EXISTS classes (
   textbook TEXT,
   level TEXT,
   -- 🔗 합반: 같은 교실 · 같은 선생님과 같이 수업하는 반 (시작·끝 시간은 다를 수 있다). 양쪽에 서로 적는다
-  hapban_with INTEGER REFERENCES classes(id) ON DELETE SET NULL
+  hapban_with INTEGER REFERENCES classes(id) ON DELETE SET NULL,
+  -- 운영 시간표: 반레벨 변경(반이름 보라) · 교체 표시 직접 입력(NULL = 지난 분기 저장본과 자동 비교, N = 없음, T/H/B)
+  level_changed INTEGER NOT NULL DEFAULT 0,
+  change_kind TEXT,
+  change_note TEXT
 );
 
 CREATE TABLE IF NOT EXISTS students (
@@ -459,6 +471,19 @@ const MIGRATIONS: ((db: DatabaseSync) => void)[] = [
   (db) => {
     upgradeHomeworkSlots(db);
   },
+  // 5: 운영 시간표 — 알바 근무 요일 · 반레벨 변경 · 교체 표시 + 실제 직원(데스크 이예진) · 강의실 최대 인원 (2026-09-30)
+  (db) => {
+    ensureColumn(db, "users", "employment", "TEXT NOT NULL DEFAULT 'FULL'");
+    ensureColumn(db, "users", "work_days", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(db, "classes", "level_changed", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn(db, "classes", "change_kind", "TEXT");
+    ensureColumn(db, "classes", "change_note", "TEXT");
+    db.exec(`UPDATE users SET name = '이예진', login_id = '이예진'
+              WHERE login_id = '이수민' AND NOT EXISTS (SELECT 1 FROM users WHERE name = '이예진')`);
+    db.exec(`UPDATE rooms SET capacity = CASE WHEN is_sr = 1 THEN 24 WHEN name = '대강의실' THEN 18 ELSE 10 END
+              WHERE capacity IS NULL`);
+    applyQ4Changes(db);
+  },
 ];
 
 const g = globalThis as unknown as { __academyDb?: DatabaseSync; __academyDbReady?: Promise<void> };
@@ -511,4 +536,10 @@ export function getDb(): DatabaseSync {
 }
 
 export const dbPath = DB_PATH;
+
+/** 백업 올리기(복원) 전에 연결을 닫는다 — 다음 getDb() 가 새 파일을 열고 마이그레이션한다 */
+export function closeDb(): void {
+  g.__academyDb?.close();
+  g.__academyDb = undefined;
+}
 export const dbExists = () => existsSync(DB_PATH);

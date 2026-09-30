@@ -6,55 +6,22 @@ import { useConfirm } from "../ConfirmDialog";
 import { IconWarning } from "../Icons";
 import { apiDelete, apiGet, apiPost, errorMessage } from "@/lib/http";
 import { can } from "@/lib/perm";
-import { classColorMap, teacherColor, type ClassColor } from "@/lib/colors";
+import { classColorMap, softColor, teacherColor } from "@/lib/colors";
 import { DAY_LABELS, fmtTime, overlaps, rangeLabel } from "@/lib/time";
 import { teacherLabel, type Book, type ClassModel, type ClassPart } from "@/lib/types";
 import TimeGrid, { dayRange, type GridBlock, type GridColumn } from "./TimeGrid";
+import { TempTag, opsContent, srItems } from "./opsViews";
 import { GRADE_ORDER, alertKey, course, dayLabel, isSwapped, levelOf, mainTeacher, ownerLabel, partBooks, partsOn, timeSpan, withStudents } from "./model";
 import type { Ctx } from "./TimetableClient";
 
 /* ------------------------------------------------------------ 공통 */
 
 function dayColors(classes: ClassModel[], day: number) {
-  return classColorMap(classes.filter((c) => c.parts.some((p) => p.days.includes(day))).map((c) => c.id));
+  const base = classColorMap(classes.filter((c) => c.parts.some((p) => p.days.includes(day))).map((c) => c.id));
+  return new Map([...base].map(([id, col]) => [id, softColor(col)]));
 }
 
-function classBlock(c: ClassModel, p: ClassPart, color: ClassColor | undefined, onClick: () => void, extra?: ReactNode): GridBlock {
-  const small = p.end - p.start <= 30;
-  const hapban = p.kind === "CLASS" && c.hapbanWith !== null;
-  return {
-    key: `${c.id}-${p.kind}-${p.start}`,
-    start: p.start,
-    end: p.end,
-    color: color ?? null,
-    kind: p.kind === "SR" ? "sr" : "class",
-    hapban,
-    title: `${c.name} ${p.label} ${rangeLabel(p.start, p.end)}`,
-    onClick,
-    content: (
-      <>
-        <b className="text-xs">
-          {c.name}({c.students.length}명)
-        </b>{" "}
-        · {p.label}
-        {hapban ? <span className="ml-1 rounded bg-navy-700 px-1 text-[10px] font-extrabold text-white">🔗 합반</span> : null}
-        <br />
-        {rangeLabel(p.start, p.end)}
-        {small ? null : (
-          <>
-            <br />🏫 {p.roomName ?? "—"}
-            {p.kind === "CLASS" ? ` · 👤 ${p.teacherName ?? "미정"}` : null}
-          </>
-        )}
-        {extra}
-      </>
-    ),
-  };
-}
-
-const TempTag = () => <span className="mt-0.5 block w-fit rounded bg-srpink px-1 text-[10px] font-bold text-white">⇄ 이번 주만</span>;
-
-function ConflictBar({ ctx, day }: { ctx: Ctx; day: number }) {
+export function ConflictBar({ ctx, day }: { ctx: Ctx; day: number }) {
   const list = ctx.data.conflicts.find((c) => c.day === day)?.list.filter((c) => c.kind !== "ROOM") ?? [];
   if (!list.length) return null;
   return (
@@ -67,38 +34,6 @@ function ConflictBar({ ctx, day }: { ctx: Ctx; day: number }) {
           <li key={c.message}>{c.message}</li>
         ))}
       </ul>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------ ① 선생님별 */
-
-export function TeacherView({ ctx, day }: { ctx: Ctx; day: number }) {
-  const { teachers, tempSwaps } = ctx.data;
-  const classes = withStudents(ctx.data.classes);
-  const colors = dayColors(classes, day);
-  const on = classes.flatMap((c) => partsOn(c, day, isSwapped(tempSwaps, c.id, day)).map((p) => ({ c, p })));
-  const busy = (id: number) => on.some(({ p }) => p.kind === "CLASS" && p.teacherId === id);
-  const list = [...teachers].sort((a, b) => Number(busy(b.id)) - Number(busy(a.id)));
-  const block = (c: ClassModel, p: ClassPart) =>
-    classBlock(c, p, colors.get(c.id), () => ctx.openClass(c.id), isSwapped(tempSwaps, c.id, day) ? <TempTag /> : null);
-  const columns: GridColumn[] = [
-    { key: "SR", label: "SR", sub: "SR룸", blocks: on.filter(({ p }) => p.kind === "SR").map(({ c, p }) => block(c, p)) },
-    ...list.map((t) => ({
-      key: `t${t.id}`,
-      label: teacherLabel(t.name),
-      sub: busy(t.id) ? "" : "수업 없음",
-      blocks: on.filter(({ p }) => p.kind === "CLASS" && p.teacherId === t.id).map(({ c, p }) => block(c, p)),
-    })),
-  ];
-  const orphan = on.filter(({ p }) => p.kind === "CLASS" && !teachers.some((t) => t.id === p.teacherId));
-  if (orphan.length) columns.push({ key: "none", label: "담당 미정", blocks: orphan.map(({ c, p }) => block(c, p)) });
-  const [a, z] = dayRange(day, on.flatMap(({ p }) => [p.start, p.end]));
-  return (
-    <div className="space-y-2">
-      <ConflictBar ctx={ctx} day={day} />
-      <TimeGrid from={a} to={z} columns={columns} nowMin={day === ctx.now.day ? ctx.now.min : null} />
-      <p className="text-xs text-muted">🟠 주황 선 = 지금 시각 (오늘 요일에서만, 1분마다 움직임) · 블록을 누르면 반 상세가 열려요.</p>
     </div>
   );
 }
@@ -120,7 +55,7 @@ export function RoomView({ ctx, day }: { ctx: Ctx; day: number }) {
 
   // 경고: 한 교실에 두 반이 겹침(SR룸 제외) · 교실 정원 초과
   const alerts = new Map<string, string>();
-  for (const r of rooms) {
+  for (const r of rooms.filter((x) => x.isSr !== 1)) {
     const items = on.filter(({ p }) => p.roomId === r.id);
     for (const { c, p } of items) {
       const msgs: string[] = [];
@@ -143,7 +78,9 @@ export function RoomView({ ctx, day }: { ctx: Ctx; day: number }) {
     }
   };
 
-  const columns: GridColumn[] = rooms.map((r) => ({
+  const srRoom = rooms.find((r) => r.isSr === 1);
+  const dayItemsAll = on.map(({ c, p }) => ({ c, p, swapped: isSwapped(tempSwaps, c.id, day) }));
+  const columns: GridColumn[] = rooms.filter((r) => r.isSr !== 1).map((r) => ({
     key: `r${r.id}`,
     label: r.name,
     sub: r.capacity ? `정원 ${r.capacity}` : "",
@@ -167,12 +104,26 @@ export function RoomView({ ctx, day }: { ctx: Ctx; day: number }) {
               {ok ? "✓ 확인됨" : `⚠ 확인필요: ${a}`}
             </span>
           ) : null;
-          return classBlock(c, p, colors.get(c.id), () => ctx.openClass(c.id), (
-            <>
-              {tag}
-              {isSwapped(tempSwaps, c.id, day) ? <TempTag /> : null}
-            </>
-          ));
+          return {
+            key: `${c.id}-${p.kind}-${p.start}`,
+            start: p.start,
+            end: p.end,
+            color: colors.get(c.id),
+            kind: p.kind === "SR" ? "sr" : "class",
+            hapban: p.kind === "CLASS" && c.hapbanWith !== null,
+            title: `${c.name} ${p.label} ${rangeLabel(p.start, p.end)}`,
+            onClick: () => ctx.openClass(c.id),
+            content: opsContent(ctx, c, p, {
+              names: false,
+              room: false,
+              extra: (
+                <>
+                  {tag}
+                  {isSwapped(tempSwaps, c.id, day) ? <TempTag /> : null}
+                </>
+              ),
+            }),
+          } satisfies GridBlock;
         }),
       ...dayBookings
         .filter((b) => b.roomId === r.id)
@@ -248,7 +199,13 @@ export function RoomView({ ctx, day }: { ctx: Ctx; day: number }) {
         </span>
         {open ? <span className="rounded-full border border-alert px-2.5 py-0.5 text-xs font-bold text-alert">확인필요 {open}건</span> : null}
       </div>
-      <TimeGrid from={a} to={z} columns={columns} nowMin={day === ctx.now.day ? ctx.now.min : null} />
+      <TimeGrid
+        from={a}
+        to={z}
+        columns={columns}
+        sr={srRoom ? { label: srRoom.name, seats: srRoom.capacity ?? 24, items: srItems(ctx, dayItemsAll, colors) } : null}
+        nowMin={day === ctx.now.day ? ctx.now.min : null}
+      />
       <div className="card p-4">
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <b>
@@ -675,15 +632,63 @@ export function ManageView({ ctx }: { ctx: Ctx }) {
       ctx.setError(errorMessage(e));
     }
   };
+  const [snapLabel, setSnapLabel] = useState<string | null>(null);
+  const snap = ctx.data.snapshot;
+  const saveSnap = async () => {
+    if (!snapLabel?.trim()) return;
+    const yes = await confirm({
+      title: "📸 분기 마감 저장",
+      message: `지금 시간표를 「${snapLabel.trim()}」 저장본으로 남기고, 직접 넣은 교체 표시 · 반레벨 변경 체크를 지워요. 다음 분기 시간표를 고치면 반 이름으로 비교해 담임교체 · 시간교체가 저절로 붙어요.`,
+      confirmText: "저장",
+    });
+    if (!yes) return;
+    try {
+      await apiPost("/api/timetable/snapshot", { label: snapLabel });
+      setSnapLabel(null);
+      await ctx.reload();
+    } catch (e) {
+      ctx.setError(errorMessage(e));
+    }
+  };
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-muted">
           한 반 안에 <b>여러 칸</b>(수업 · SR)을 두고, 칸마다 요일을 다르게 정할 수 있어요.
         </span>
-        <button type="button" className="btn btn-primary" onClick={() => ctx.editClass(null)}>
-          ＋ 새 반 추가
-        </button>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-muted">
+            교체 비교 기준: {snap ? <b>{snap.label} 저장본 ({snap.savedAt.slice(0, 10)})</b> : "없음"}
+          </span>
+          {snapLabel === null ? (
+            <button type="button" className="btn" onClick={() => setSnapLabel("")} title="분기가 끝날 때, 다음 분기 시간표를 고치기 전에 눌러요">
+              📸 분기 마감 저장
+            </button>
+          ) : (
+            <>
+              <input
+                className="field w-32 py-1"
+                placeholder="예) 4분기"
+                value={snapLabel}
+                autoFocus
+                onChange={(e) => setSnapLabel(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void saveSnap();
+                  if (e.key === "Escape") setSnapLabel(null);
+                }}
+              />
+              <button type="button" className="btn" onClick={() => void saveSnap()}>
+                저장
+              </button>
+              <button type="button" className="btn btn-ghost" onClick={() => setSnapLabel(null)}>
+                취소
+              </button>
+            </>
+          )}
+          <button type="button" className="btn btn-primary" onClick={() => ctx.editClass(null)}>
+            ＋ 새 반 추가
+          </button>
+        </div>
       </div>
       <div className="card overflow-hidden">
         <table className="w-full text-sm">

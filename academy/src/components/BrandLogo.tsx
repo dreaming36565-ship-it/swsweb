@@ -37,15 +37,17 @@ export default function BrandLogo({
   }, [brand.logo]);
 
   if (ready) {
+    // 로고는 흰 글씨(투명 배경)라 어느 바탕에서도 보이게 네이비 네모 위에 올린다
     return (
-      // 로고는 사용자가 나중에 넣는 파일이라 next/image 최적화를 쓰지 않는다
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={brand.logo}
-        alt={brand.brand}
-        className={`object-contain ${className}`}
-        style={{ width: size, height: size }}
-      />
+      <span
+        className={`inline-flex shrink-0 items-center justify-center rounded-lg bg-navy-900 ${className}`}
+        style={{ width: size, height: size, padding: Math.round(size * 0.1) }}
+        title={brand.brand}
+      >
+        {/* 로고는 사용자가 넣는 파일이라 next/image 최적화를 쓰지 않는다 */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={brand.logo} alt={brand.brand} className="h-full w-full object-contain" />
+      </span>
     );
   }
 

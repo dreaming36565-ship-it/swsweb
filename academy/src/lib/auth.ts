@@ -1,13 +1,52 @@
 // ★ 서버 전용. 클라이언트 컴포넌트에서 import 금지.
-// 사내망 전제의 단순 구현 — 비밀번호 평문 저장, 쿠키는 HMAC 서명만 한다.
+// 비밀번호는 scrypt 해시로 저장한다(예전 평문은 로그인할 때 저절로 해시로 바뀐다). 쿠키는 HMAC 서명.
 
 import { cookies } from "next/headers";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { getDb } from "./db";
 import { ROLES, type Department, type Role, type SessionUser } from "./types";
 
-const SECRET = process.env.ACADEMY_SECRET ?? "academy-local-dev-secret";
 export const COOKIE_NAME = "academy_session";
+
+/** 쿠키 서명 비밀값 — 환경변수가 없으면 DB에 한 번 만들어 둔 무작위 값 (서버를 다시 켜도 로그인 유지) */
+let secret: string | null = process.env.ACADEMY_SECRET || null;
+function getSecret(): string {
+  if (secret) return secret;
+  const db = getDb();
+  const cur = db.prepare("SELECT value FROM app_settings WHERE key = 'session_secret'").get() as { value: string } | undefined;
+  if (cur?.value) return (secret = cur.value);
+  const made = randomBytes(32).toString("base64url");
+  db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('session_secret', ?)").run(made);
+  return (secret = made);
+}
+
+/** 백업을 올려 DB가 바뀌면 비밀값을 새 DB에서 다시 읽는다 (모두 다시 로그인) */
+export function resetSecret(): void {
+  secret = process.env.ACADEMY_SECRET || null;
+}
+
+/* ------------------------------------------------------------------ 비밀번호 */
+
+/** "scrypt$소금$해시" */
+export function hashPassword(pw: string): string {
+  const salt = randomBytes(16).toString("base64url");
+  return `scrypt$${salt}$${scryptSync(pw, salt, 32).toString("base64url")}`;
+}
+
+/** 해시 · 예전 평문 모두 확인한다 */
+export function checkPassword(stored: string, pw: string): boolean {
+  if (!stored.startsWith("scrypt$")) {
+    const a = Buffer.from(stored);
+    const b = Buffer.from(pw);
+    return a.length === b.length && timingSafeEqual(a, b);
+  }
+  const [, salt, hash] = stored.split("$");
+  const expected = Buffer.from(hash, "base64url");
+  const got = scryptSync(pw, salt, expected.length);
+  return timingSafeEqual(got, expected);
+}
+
+/* -------------------------------------------------------------------- 세션 */
 
 type UserRow = {
   id: number;
@@ -18,12 +57,14 @@ type UserRow = {
   department: Department;
   active: number;
   must_change_pw: number;
+  employment: string;
+  work_days: string;
 };
 
-const USER_COLS = "id, login_id, name, role, roles, department, active, must_change_pw";
+const USER_COLS = "id, login_id, name, role, roles, department, active, must_change_pw, employment, work_days";
 
 function sign(payload: string): string {
-  return createHmac("sha256", SECRET).update(payload).digest("base64url");
+  return createHmac("sha256", getSecret()).update(payload).digest("base64url");
 }
 
 export function makeToken(userId: number): string {
@@ -50,6 +91,10 @@ export function parseRoles(roles: string | null | undefined, fallback?: string):
   return fallback && (ROLES as string[]).includes(fallback) ? [fallback as Role] : [];
 }
 
+/** "1,3,5" → [1,3,5] */
+export const parseDays = (s: string | null | undefined) =>
+  [...new Set((s ?? "").split(",").filter((x) => x.trim() !== "").map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))];
+
 function toSessionUser(row: UserRow): SessionUser {
   return {
     id: row.id,
@@ -58,6 +103,8 @@ function toSessionUser(row: UserRow): SessionUser {
     roles: parseRoles(row.roles, row.role),
     department: row.department,
     mustChangePw: row.must_change_pw === 1,
+    partTime: row.employment === "PART",
+    workDays: parseDays(row.work_days),
   };
 }
 
@@ -81,7 +128,14 @@ export function verifyLogin(loginId: string, password: string): SessionUser | nu
     if (byName.length === 1) row = byName[0];
   }
   if (!row || row.active !== 1) return null;
-  if (row.password !== password) return null;
+  if (!checkPassword(row.password, password)) return null;
+  // 예전 평문 비밀번호는 이번에 해시로 바꿔 둔다
+  if (!row.password.startsWith("scrypt$")) db.prepare("UPDATE users SET password = ? WHERE id = ?").run(hashPassword(password), row.id);
+  // 배포 서버에서는 처음 비밀번호(1234)로 계속 쓰지 못하게 — 새 비밀번호를 정해야 들어간다
+  if (process.env.NODE_ENV === "production" && password === "1234" && row.must_change_pw !== 1) {
+    db.prepare("UPDATE users SET must_change_pw = 1 WHERE id = ?").run(row.id);
+    row.must_change_pw = 1;
+  }
   return toSessionUser(row);
 }
 

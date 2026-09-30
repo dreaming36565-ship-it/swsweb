@@ -6,7 +6,11 @@ import { useCallback, useEffect, useState } from "react";
 import { useConfirm } from "../ConfirmDialog";
 import { IconChevronLeft, IconChevronRight, IconTrash } from "../Icons";
 import { apiDelete, apiGet, apiPatch, apiPost, errorMessage } from "@/lib/http";
+import { DAY_LABELS } from "@/lib/time";
 import { ROLES, ROLE_LABEL, rolesLabel, type Role, type StaffUser } from "@/lib/types";
+
+/** 근무 요일 고르기 — 월~토 */
+const WORK_WEEK = [1, 2, 3, 4, 5, 6];
 import type { Ctx } from "./TimetableClient";
 
 export default function StaffView({ ctx }: { ctx: Ctx }) {
@@ -16,6 +20,12 @@ export default function StaffView({ ctx }: { ctx: Ctx }) {
   const [newName, setNewName] = useState("");
   const [newRoom, setNewRoom] = useState("");
   const [renaming, setRenaming] = useState<{ id: number; kind: "user" | "room"; value: string } | null>(null);
+  /** 관리자가 비밀번호 정해 주기 */
+  const [pwFor, setPwFor] = useState<{ id: number; value: string } | null>(null);
+  const savePw = (u: StaffUser) => {
+    if (!pwFor) return;
+    void run(() => apiPatch("/api/users", { id: u.id, password: pwFor.value }), `${u.name} 비밀번호를 정했어요 — 본인에게 알려 주세요`).then(() => setPwFor(null));
+  };
 
   const loadUsers = useCallback(async () => {
     try {
@@ -55,7 +65,7 @@ export default function StaffView({ ctx }: { ctx: Ctx }) {
       <section className="card p-4">
         <b>계정 · 권한</b>
         <p className="mb-2 mt-1 text-xs text-muted">
-          아이디 = 한글 이름. 권한은 여러 개 고를 수 있고, 고른 권한들이 할 수 있는 일을 모두 해요. 예) 안예슬 = 관리자 + 선생님. 새 계정 · 초기화한 계정은 1234로 로그인한 뒤 새 비밀번호를 정해요.
+          아이디 = 한글 이름. 비밀번호는 <b>「비밀번호 정하기」</b>로 관리자가 정해 알려 주거나, <b>「초기화」</b>(1234)하면 본인이 다음 로그인 때 새로 정해요. 권한은 여러 개 고를 수 있고, 고른 권한들이 할 수 있는 일을 모두 해요. 예) 안예슬 = 관리자 + 선생님.           데스크 <b>알바</b>는 근무 요일의 시간표 · SR 화면만 보여요(결석관리는 제한 없음). 선생님은 내 시간표만 보여요.
         </p>
         <table className="w-full text-sm">
           <thead>
@@ -67,6 +77,7 @@ export default function StaffView({ ctx }: { ctx: Ctx }) {
                 </th>
               ))}
               <th className="px-2.5 py-2">소속</th>
+              <th className="px-2.5 py-2">근무 (데스크)</th>
               <th className="px-2.5 py-2">할 수 있는 일</th>
               <th className="px-2.5 py-2" />
             </tr>
@@ -106,11 +117,71 @@ export default function StaffView({ ctx }: { ctx: Ctx }) {
                       <option value="HIGH">고등부</option>
                     </select>
                   </td>
+                  <td className="px-2.5 py-2 text-sm">
+                    {u.roles.includes("DESK") && !u.roles.includes("ADMIN") ? (
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <label className="inline-flex items-center gap-1">
+                          <input type="radio" checked={!u.partTime} onChange={() => void run(() => apiPatch("/api/users", { id: u.id, partTime: false }), `${u.name}: 정직원`)} />
+                          정직원
+                        </label>
+                        <label className="inline-flex items-center gap-1">
+                          <input type="radio" checked={u.partTime} onChange={() => void run(() => apiPatch("/api/users", { id: u.id, partTime: true }), `${u.name}: 알바 — 근무 요일을 골라 주세요`)} />
+                          알바
+                        </label>
+                        {u.partTime ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-lg bg-navy-50 px-2 py-0.5">
+                            {WORK_WEEK.map((d) => (
+                              <label key={d} className="inline-flex items-center gap-0.5">
+                                <input
+                                  type="checkbox"
+                                  checked={u.workDays.includes(d)}
+                                  onChange={(e) => {
+                                    const next = e.target.checked ? [...u.workDays, d] : u.workDays.filter((x) => x !== d);
+                                    void run(() => apiPatch("/api/users", { id: u.id, workDays: next }));
+                                  }}
+                                />
+                                {DAY_LABELS[d]}
+                              </label>
+                            ))}
+                          </span>
+                        ) : null}
+                        {u.partTime && !u.workDays.length ? <span className="text-xs font-bold text-alert">근무 요일 없음</span> : null}
+                      </div>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </td>
                   <td className="px-2.5 py-2 text-xs text-muted">{rolesLabel(u.roles)}</td>
                   <td className="whitespace-nowrap px-2.5 py-2 text-right">
+                    {pwFor?.id === u.id ? (
+                      <span className="mr-1 inline-flex items-center gap-1">
+                        <input
+                          className="field w-36 py-1 text-xs"
+                          placeholder="새 비밀번호 (4자 이상)"
+                          value={pwFor.value}
+                          autoFocus
+                          onChange={(e) => setPwFor({ id: u.id, value: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") savePw(u);
+                            if (e.key === "Escape") setPwFor(null);
+                          }}
+                        />
+                        <button type="button" className="btn btn-primary px-2 py-0.5 text-xs" disabled={pwFor.value.length < 4} onClick={() => savePw(u)}>
+                          저장
+                        </button>
+                        <button type="button" className="btn btn-ghost px-1.5 py-0.5 text-xs" onClick={() => setPwFor(null)}>
+                          취소
+                        </button>
+                      </span>
+                    ) : (
+                      <button type="button" className="btn mr-1 px-2 py-0.5 text-xs" title="관리자가 비밀번호를 정해서 알려 줄 때" onClick={() => setPwFor({ id: u.id, value: "" })}>
+                        비밀번호 정하기
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="btn px-2 py-0.5 text-xs"
+                      title="1234로 되돌려요 — 본인이 다음 로그인 때 새 비밀번호를 정해요"
                       onClick={async () => {
                         if (await confirm({ title: "비밀번호를 초기화할까요?", message: `${u.name} 비밀번호를 1234로 바꿔요. 다음 로그인 때 새 비밀번호를 정해요.`, confirmText: "초기화" }))
                           void run(() => apiPatch("/api/users", { id: u.id, resetPassword: true }), `${u.name} 비밀번호를 1234로 초기화했어요`);

@@ -21,3 +21,6 @@ academy/public/mockups/
 *.xlsx
 *.xls
 *.csv
+
+# 타입체크 캐시
+*.tsbuildinfo

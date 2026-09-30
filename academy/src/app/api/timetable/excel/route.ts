@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/auth";
+import { can, dayLimit } from "@/lib/perm";
 import { listClassModels, listTeachers } from "@/lib/repo";
 import { classColorMap } from "@/lib/colors";
 import { DAY_LABELS, dateKey, fmtTime, overlaps } from "@/lib/time";
@@ -12,6 +13,9 @@ import { DAY_LABELS, dateKey, fmtTime, overlaps } from "@/lib/time";
 export async function GET() {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "로그인이 필요합니다." }, { status: 401 });
+  // 전체 시간표 — 관리자 · 데스크 (알바는 근무 요일만 봐서 전체 엑셀은 안 됨)
+  if (!can(user, "timetable.all") || dayLimit(user))
+    return NextResponse.json({ ok: false, error: "전체 시간표 엑셀은 관리자 · 데스크(정직원)만 받을 수 있어요." }, { status: 403 });
 
   const classes = listClassModels();
   const teachers = listTeachers();

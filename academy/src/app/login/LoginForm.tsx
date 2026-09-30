@@ -8,11 +8,13 @@ import { DEPARTMENTS } from "@/lib/types";
 
 const REMEMBER_KEY = "academy.login.remember";
 
+/** 이 컴퓨터에서 개발할 때만 보이는 빠른 로그인 — 배포 서버에서는 숨긴다 */
+const SHOW_DEMO = process.env.NODE_ENV !== "production";
 const DEMO = [
   { loginId: "안예슬", label: "안예슬 (관리자+선생님)" },
   { loginId: "최나영", label: "최나영 (선생님)" },
   { loginId: "정필드", label: "정필드 (고등)" },
-  { loginId: "이수민", label: "이수민 (데스크)" },
+  { loginId: "이예진", label: "이예진 (데스크)" },
 ];
 
 export default function LoginForm() {
@@ -132,7 +134,7 @@ export default function LoginForm() {
                 type="button"
                 className="text-sm text-navy-600 hover:underline"
                 onClick={() =>
-                  setNotice("관리자에게 비밀번호 초기화를 부탁하세요 (시간표 › 계정 · 강의실). 초기화하면 1234로 로그인한 뒤 새 비밀번호를 정해요.")
+                  setNotice("관리자에게 부탁하세요 — 새 비밀번호를 정해 주거나, 1234로 초기화해 줘요(1234로 로그인한 뒤 새 비밀번호를 정해요).")
                 }
               >
                 비밀번호 찾기
@@ -155,6 +157,7 @@ export default function LoginForm() {
             </button>
           </form>
 
+          {SHOW_DEMO ? (
           <div className="mt-6 border-t border-line pt-4">
             <div className="text-xs font-semibold text-muted">데모 계정 (비밀번호 1234)</div>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -173,6 +176,7 @@ export default function LoginForm() {
               ))}
             </div>
           </div>
+          ) : null}
         </div>
       </div>
     </div>

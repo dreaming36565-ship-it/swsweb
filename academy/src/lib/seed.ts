@@ -703,16 +703,45 @@ function parseRounds(text: string, absent: string): { type: "MAKEUP" | "TASK"; d
   return out;
 }
 
+/* ------------------------------------------------------------ 운영 시간표 교체 표시 */
+
+/**
+ * 2026 4분기 교체 정보 — 시트 색에서 옮김 (반 이름 → 종류 · 3분기 담임).
+ * 지난 분기 저장본이 없어서 직접 입력으로 넣는다. 다음 분기부터는 「📸 분기 마감 저장」 후 자동 비교.
+ */
+const Q4_CHANGES: [name: string, kind: "T" | "H" | "B", note: string][] = [
+  ["5P1", "T", "3분기 효신T+희주T"],
+  ["5A1", "T", "3분기 희주T+나영T"],
+  ["8A1", "B", ""],
+  ["7A1", "B", ""],
+  ["중등피팅", "H", ""],
+  ["9A1", "T", "3분기 예슬T"],
+  ["초등피팅", "B", "3분기 희주T"],
+  ["6A2", "T", "3분기 나영T"],
+  ["6P2", "T", "3분기 효신T"],
+  ["7P2", "T", "3분기 희주T"],
+  ["9A2", "B", "3분기 나영T"],
+  ["개별 금2-1", "T", ""],
+  ["개별 금2-2", "T", ""],
+  ["개별 금4-2", "B", ""],
+];
+
+export function applyQ4Changes(db: DatabaseSync): void {
+  const set = db.prepare("UPDATE classes SET change_kind = ?, change_note = ? WHERE name = ? AND change_kind IS NULL");
+  for (const [name, kind, note] of Q4_CHANGES) set.run(kind, note || null, name);
+}
+
 /* ------------------------------------------------------------ 데모 데이터 */
 
 export function seedDemo(db: DatabaseSync): void {
   const now = new Date().toISOString();
 
-  // 강의실 — 부서 공용. 순서 고정: SR룸 · 1강 · 2강 · 3강 · 4강 · 대강의실 (최대 인원은 관리자가 넣는다)
-  const roomInsert = db.prepare("INSERT INTO rooms (name, order_no, is_sr) VALUES (?, ?, ?)");
+  // 강의실 — 부서 공용. 순서 고정: SR룸 · 1강 · 2강 · 3강 · 4강 · 대강의실. 최대 인원 SR 24 · 1~4강 10 · 대강의실 18
+  const roomInsert = db.prepare("INSERT INTO rooms (name, order_no, is_sr, capacity) VALUES (?, ?, ?, ?)");
   const rooms: Record<string, number> = {};
   ["SR룸", "1강", "2강", "3강", "4강", "대강의실"].forEach((name, i) => {
-    rooms[name] = Number(roomInsert.run(name, i + 1, name === "SR룸" ? 1 : 0).lastInsertRowid);
+    const cap = name === "SR룸" ? 24 : name === "대강의실" ? 18 : 10;
+    rooms[name] = Number(roomInsert.run(name, i + 1, name === "SR룸" ? 1 : 0, cap).lastInsertRowid);
   });
 
   // 직원 — 아이디 = 한글 이름, 비밀번호는 전부 1234. 안예슬 = 관리자 + 선생님(담당 반 있음)
@@ -724,7 +753,7 @@ export function seedDemo(db: DatabaseSync): void {
     ["yeseul", "안예슬", "ADMIN,TEACHER", "ELEM"],
     ["nayoung", "최나영", "TEACHER", "ELEM"],
     ["field", "정필드", "TEACHER", "HIGH"],
-    ["desk", "이수민", "DESK", "ELEM"],
+    ["desk", "이예진", "DESK", "ELEM"],
   ];
   for (const [key, name, roles, dept] of userDefs) {
     users[key] = Number(userInsert.run(name, name, roles.split(",")[0], roles, dept).lastInsertRowid);
@@ -820,6 +849,7 @@ export function seedDemo(db: DatabaseSync): void {
 
   importLocalRecords(db);
   rebuildSrSeats(db);
+  applyQ4Changes(db);
 
   // 공지
   const noticeInsert = db.prepare("INSERT INTO notices (title, body, department, author_id, created_at) VALUES (?, ?, ?, ?, ?)");

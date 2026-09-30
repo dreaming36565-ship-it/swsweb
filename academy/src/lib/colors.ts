@@ -19,6 +19,16 @@ const PALETTE = [
 
 export type ClassColor = { bg: string; border: string; text: string };
 
+/** "#RRGGBB" 를 흰색과 섞는다 (t = 흰색 비율) */
+function mixWhite(hex: string, t: number): string {
+  const n = Number.parseInt(hex.slice(1), 16);
+  const c = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => Math.round(v + (255 - v) * t));
+  return `rgb(${c.join(",")})`;
+}
+
+/** 운영 시간표용 옅은 반 색 — 바탕 55% · 테두리 35% 흰색과 섞음 (글자가 잘 보이게 차분하게) */
+export const softColor = (c: ClassColor): ClassColor => ({ bg: mixWhite(c.bg, 0.55), border: mixWhite(c.border, 0.35), text: c.text });
+
 /** 담당 선생님 고유 색 — 전체 반 카드 테두리 (선생님 순서대로 파랑·분홍·보라·초록·주황…) */
 const TEACHER_COLORS = ["#2563EB", "#DB2777", "#7C3AED", "#059669", "#EA580C", "#0891B2", "#CA8A04"];
 export const teacherColor = (index: number) => TEACHER_COLORS[Math.max(0, index) % TEACHER_COLORS.length];

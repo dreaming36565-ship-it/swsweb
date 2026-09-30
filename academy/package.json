@@ -3,12 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=24"
+    "node": "24.x"
   },
   "scripts": {
     "dev": "next dev -p 3100 -H 127.0.0.1",
     "build": "next build",
-    "start": "next start -p 3100 -H 127.0.0.1",
+    "start": "node scripts/start.mjs",
     "seed": "node scripts/seed.mjs"
   },
   "dependencies": {

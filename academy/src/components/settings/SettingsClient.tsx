@@ -1,18 +1,19 @@
 "use client";
 
-// 설정 — 내 정보 · 비밀번호 바꾸기 / 알림음 / 숙제반 설문 응답 주소(관리자) / 권한 표.
+// 설정 — 내 정보 · 비밀번호 바꾸기 / 알림음 / 숙제반 설문 응답 주소(관리자) / 백업(관리자) / 권한 표.
 // 계정 · 강의실 관리는 시간표 화면의 「계정 · 강의실」 탭으로 옮겼다.
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { IconVolume } from "../Icons";
+import BackupSection from "./BackupSection";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
 import { isAlarmEnabled, playAlarm, setAlarmEnabled, unlockAudio } from "@/lib/alarm";
 import { DEPARTMENTS, hasRole, rolesLabel, type SessionUser } from "@/lib/types";
 
 /** 권한 표 — 한 사람이 권한을 여러 개 가지면 그 권한들이 할 수 있는 일을 모두 한다 */
 const PERMISSION_ROWS: [string, string, string, string][] = [
-  ["시간표 보기 · 학생 찾기 · 엑셀 다운로드", "○", "○", "○"],
+  ["전체 시간표 (요일별 · 선생님별 · 교실별 · 전체 반) · 학생 찾기 · 엑셀 다운로드", "○", "내 시간표만", "○ (알바 = 근무 요일만)"],
   ["반 관리 (반 만들기·시간) · 계정 · 강의실 · 명단 엑셀 올리기", "○", "–", "–"],
   ["교재 책장 · 반 학생 명단 고치기 · 사용교재 입력", "○", "○", "○"],
   ["알파·수업 순서 바꾸기", "○", "–", "–"],
@@ -158,6 +159,8 @@ export default function SettingsClient({ user }: { user: SessionUser }) {
             {formMsg ? <div className={`mt-2 text-sm font-semibold ${formMsg.ok ? "text-present" : "text-alert"}`}>{formMsg.text}</div> : null}
           </section>
         ) : null}
+
+        {isAdmin ? <BackupSection /> : null}
 
         <section className="card p-5 xl:col-span-3">
           <h2 className="text-base font-bold text-ink">권한</h2>
