@@ -15,7 +15,7 @@ import { apiGet, apiPost, errorMessage } from "@/lib/http";
 import { can, dayLimit } from "@/lib/perm";
 import { playAlarm } from "@/lib/alarm";
 import { classColorMap, LEVEL_COLOR, type ClassColor } from "@/lib/colors";
-import { LEVEL_NAME, classMoveOptions, freeSeatsBetween, movableSeatsFor, occupantsAt, seatBlocker, seatCol, type SeatUse } from "@/lib/sr";
+import { LEVEL_NAME, classMoveOptions, freeSeatsBetween, movableSeatsFor, occupantsAt, seatBlocker, seatCol, studentSwapCheck, type SeatUse } from "@/lib/sr";
 import { DAY_LABELS, addDaysKey, clockLabel, dateKey, fmtTime, minutesOfDay, monthDay, rangeLabel, weekDateOf } from "@/lib/time";
 import { teacherLabel, type SessionUser } from "@/lib/types";
 import type { SrAdhocRequest, SrClass, SrSnapshot } from "@/lib/repo/sr";
@@ -221,7 +221,7 @@ export default function SrClient({ user }: { user: SessionUser }) {
           }}
           slot={slot}
           setSlot={setSlot}
-          move={view === "next" ? null : move}
+          move={move}
           adhoc={view === "next" ? null : adhoc}
           preview={view === "next"}
           onConfirmNext={
@@ -230,7 +230,7 @@ export default function SrClient({ user }: { user: SessionUser }) {
                   const m = nextMonth;
                   const yes = await confirm(
                     undo
-                      ? { title: `${m}월 자리 확정을 풀까요?`, message: `${m}/1에 그날 명단으로 새로 계산해요.`, confirmText: "확정 풀기" }
+                      ? { title: `${m}월 자리 확정을 풀까요?`, message: `직접 옮긴 자리도 없어지고, ${m}/1에 그날 명단으로 새로 계산해요.`, confirmText: "확정 풀기" }
                       : {
                           title: `📌 ${m}월 자리를 확정할까요?`,
                           message: `지금 보이는 자리 그대로 ${m}/1에 바뀌어요. 그 사이 새로 온 학생만 빈자리에 앉고, 빠진 학생 자리는 비워요. 확정한 뒤 인쇄하세요.`,
@@ -241,7 +241,7 @@ export default function SrClient({ user }: { user: SessionUser }) {
                 }
               : undefined
           }
-          classMove={view === "next" ? null : classMove}
+          classMove={classMove}
           onClassMove={(id) => {
             setMove(null);
             setAdhoc(null);
@@ -252,15 +252,17 @@ export default function SrClient({ user }: { user: SessionUser }) {
             const c = snapFor.classes.find((x) => x.id === classMove);
             const opt = classMoveOptions(snapFor.weekUses, (id) => snapFor.blocks.filter((b) => b.classId === id), classMove).get(col);
             if (!opt || (opt.kind !== "move" && opt.kind !== "swap")) return;
+            const next = view === "next";
+            const where = next ? ` (${nextMonth}월 자리 · 📌 확정돼요)` : "";
             const yes = await confirm({
               title: opt.kind === "swap" ? `${c?.name} ⇄ ${opt.label} 자리를 맞바꿀까요?` : `${c?.name}을(를) ${col}열로 옮길까요?`,
               message:
                 opt.kind === "swap"
-                  ? `${c?.name} → ${col}열 · ${opt.label} → ${c?.name}이(가) 앉던 열. 두 반이 SR을 쓰는 모든 요일에 적용돼요.`
-                  : `${c?.name} ${c?.members.length ?? 0}명 → ${col}1부터. 이 반이 SR을 쓰는 모든 요일에 적용돼요.`,
+                  ? `${c?.name} → ${col}열 · ${opt.label} → ${c?.name}이(가) 앉던 열. 두 반이 SR을 쓰는 모든 요일에 적용돼요.${where}`
+                  : `${c?.name} ${c?.members.length ?? 0}명 → ${col}1부터. 이 반이 SR을 쓰는 모든 요일에 적용돼요.${where}`,
               confirmText: opt.kind === "swap" ? "맞바꾸기" : "옮기기",
             });
-            if (yes && (await act({ action: "MOVE_CLASS", classId: classMove, col }, opt.kind === "swap" ? "맞바꿈" : `${col}열로 옮김`))) setClassMove(null);
+            if (yes && (await act({ action: next ? "NEXT_MOVE_CLASS" : "MOVE_CLASS", classId: classMove, col }, opt.kind === "swap" ? "맞바꿈" : `${col}열로 옮김`))) setClassMove(null);
           }}
           cancelMode={() => {
             setMove(null);
@@ -269,7 +271,8 @@ export default function SrClient({ user }: { user: SessionUser }) {
           }}
           onPickMove={(seat) => {
             if (!move) return;
-            if (mover)
+            if (view === "next") void act({ action: "NEXT_MOVE", classId: move.classId, studentId: move.studentId, seat }, `${move.name} → ${seat}`).then((ok) => ok && setMove(null));
+            else if (mover)
               void act({ action: "MOVE", classId: move.classId, studentId: move.studentId, seat }, `${move.name} → ${seat} (모든 요일 같은 자리로)`).then((ok) => ok && setMove(null));
             else setAsk({ seat });
           }}
@@ -277,7 +280,15 @@ export default function SrClient({ user }: { user: SessionUser }) {
             if (!adhoc) return;
             void act({ action: "ADHOC", ...adhoc, seat }, `${adhoc.name} → ${seat} (${adhoc.kind})`).then((ok) => ok && setAdhoc(null));
           }}
-          onStudent={(o) => o.classId && o.studentId && setStudent({ classId: o.classId, studentId: o.studentId, name: o.name })}
+          onStudent={(o) => {
+            if (!o.classId || !o.studentId) return;
+            // 📅 미리보기는 누르면 바로 옮기기 (데스크·관리자)
+            if (view !== "next") setStudent({ classId: o.classId, studentId: o.studentId, name: o.name });
+            else if (mover) {
+              setClassMove(null);
+              setMove({ classId: o.classId, studentId: o.studentId, name: o.name });
+            }
+          }}
         />
       )}
 
@@ -1013,7 +1024,7 @@ function DayView({
 }: {
   user: SessionUser;
   snap: SrSnapshot;
-  /** 📅 다음 달 자리 미리보기 — 보기만 */
+  /** 📅 다음 달 자리 미리보기 — 데스크·관리자는 옮기면 그대로 📌 확정 */
   preview?: boolean;
   classMove: number | null;
   /** 📌 다음 달 자리 확정 (관리자) — undo = 확정 풀기 */
@@ -1070,6 +1081,19 @@ function DayView({
           ),
         };
       const who = movable.get(seat);
+      const swap = who && preview ? studentSwapCheck(snap.weekUses, (id) => snap.blocks.filter((b) => b.classId === id), key, seat) : null;
+      if (swap?.ok)
+        return {
+          tone: "swap",
+          onClick: () => onPickMove(seat),
+          title: `${move.name} ⇄ ${swap.other.name}(${swap.other.label})`,
+          content: (
+            <>
+              <span className="mt-1.5 block text-xs font-extrabold">⇄ 맞바꾸기</span>
+              <span className="text-[11px]">{swap.other.name}</span>
+            </>
+          ),
+        };
       return who
         ? { tone: "block", title: `쓰는 사람: ${who.name} (${who.label} ${DAY_LABELS[who.day]} ${rangeLabel(who.start, who.end)})`, content: <span className="mt-1.5 block text-[11px]">{who.name}</span> }
         : { tone: "pick", onClick: () => onPickMove(seat), content: <span className="mt-1.5 block text-sm font-extrabold">여기로</span> };
@@ -1077,8 +1101,9 @@ function DayView({
     banner = (
       <div className="flex items-center justify-between rounded-xl border border-srpink-soft bg-srpink-soft px-4 py-2.5 text-sm font-bold text-srpink">
         <span>
-          ↔ <b>{move.name}</b>({snap.classes.find((c) => c.id === move.classId)?.name}) {can(user, "sr.move") ? "자리 바꾸기" : "자리 요청 — 고른 자리를 데스크에 요청해요"} · 이 반이 SR을 쓰는{" "}
+          ↔ <b>{move.name}</b>({snap.classes.find((c) => c.id === move.classId)?.name}) {preview ? `${Number(snap.preview?.month.slice(5))}월 자리 바꾸기` : can(user, "sr.move") ? "자리 바꾸기" : "자리 요청 — 고른 자리를 데스크에 요청해요"} · 이 반이 SR을 쓰는{" "}
           <b>모든 요일·시간</b> 동안 비어 있는 자리만 분홍색이에요.
+          {preview ? <span className="text-late"> 노랑 = 그 학생과 맞바꾸기</span> : null}
         </span>
         <button type="button" className="btn px-2.5 py-1 text-xs" onClick={cancelMode}>
           취소
@@ -1158,11 +1183,13 @@ function DayView({
             <span>
               <b>📌 {Number(snap.preview.month.slice(5))}월 자리 확정됨</b> ({snap.preview.confirmed.by} · {snap.preview.confirmed.at}) — {Number(snap.preview.month.slice(5))}/1에{" "}
               <b>이 자리 그대로</b> 바뀌어요. 그 사이 새로 온 학생만 빈자리에. 지금과 달라지는 학생 <b>{snap.preview.changed}명</b>
+              {can(user, "sr.move") ? <span className="mt-0.5 block font-bold">학생을 누르면 옮기기 · 오른쪽 ↔ = 반 통째로 · 옮기면 바로 📌 확정</span> : null}
             </span>
           ) : (
             <span>
               <b>📅 {Number(snap.preview.month.slice(5))}월 자리 미리보기</b> — 지금 명단(다음 달 숙제반 신청 포함) · 새 규칙으로 처음부터 앉혀 본 모습이에요. 아직 확정 전 · 명단이 바뀌면
               달라져요. 지금과 달라지는 학생 <b>{snap.preview.changed}명</b>
+              {can(user, "sr.move") ? <span className="mt-0.5 block font-bold">학생을 누르면 옮기기 · 오른쪽 ↔ = 반 통째로 · 옮기면 바로 📌 확정</span> : null}
             </span>
           )}
           {onConfirmNext ? (
@@ -1213,14 +1240,14 @@ function DayView({
             </b>
             <span className="rounded-full border border-line px-2.5 py-0.5 text-xs font-bold">{occ.size} / 24석</span>
           </div>
-          <SeatMap occ={occ} colors={colors} mark={mark} onSeat={(o) => !preview && !o.adhocId && onStudent(o)} />
+          <SeatMap occ={occ} colors={colors} mark={mark} onSeat={(o) => !o.adhocId && onStudent(o)} />
         </div>
         <div className="w-[340px] shrink-0 space-y-3">
           <div className="card p-4">
             <h3 className="mb-2 text-[15px] font-bold">이 요일 SR 반</h3>
             {dayClasses.length === 0 ? <p className="text-sm text-muted">없어요.</p> : null}
             {dayClasses.map((id) => (
-              <Legend key={id} snap={snap} classId={id} day={day} color={colors.get(id)} onMove={!preview && can(user, "sr.move") ? () => onClassMove(id) : undefined} />
+              <Legend key={id} snap={snap} classId={id} day={day} color={colors.get(id)} onMove={can(user, "sr.move") ? () => onClassMove(id) : undefined} />
             ))}
           </div>
           {preview ? null : <LogPanel snap={snap} />}

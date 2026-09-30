@@ -309,3 +309,22 @@ export function classMoveOptions(uses: SeatUse[], blocksOf: (classId: number) =>
   }
   return out;
 }
+
+/** 학생 둘 자리 맞바꾸기 판단 결과 */
+export type StudentSwapCheck = { ok: true; other: SeatUse } | { ok: false; reason: string };
+
+/**
+ * 학생 자리 맞바꾸기 — key 학생이 seat 으로 가고, 거기 앉은 학생이 key 학생 자리로 온다.
+ * seat 을 그 반 SR 시간에 쓰는 사람이 한 명뿐이고, 그 학생이 와도 그 반 SR 시간에 겹치는 사람이 없을 때만.
+ */
+export function studentSwapCheck(uses: SeatUse[], blocksOf: (classId: number) => SrBlock[], key: string, seat: string): StudentSwapCheck {
+  const mine = uses.find((u) => u.key === key);
+  if (!mine || mine.classId === null) return { ok: false, reason: "지금 자리가 없어요" };
+  const inSeat = uses.filter((u) => u.seat === seat && u.key !== key && blockOverlap(blocksOf(mine.classId!), u));
+  const keys = [...new Set(inSeat.map((u) => u.key))];
+  if (keys.length !== 1) return { ok: false, reason: `${[...new Set(inSeat.map((u) => `${u.name}(${u.label})`))].join(" · ")}이(가) 써요` };
+  const other = inSeat[0];
+  if (other.classId === null || other.studentId === null) return { ok: false, reason: `${other.name}은(는) 임시 자리예요` };
+  const clash = uses.find((u) => u.seat === mine.seat && u.key !== key && u.key !== other.key && blockOverlap(blocksOf(other.classId!), u));
+  return clash ? { ok: false, reason: `맞바꾸면 ${other.name}이(가) ${clash.name}(${clash.label})과(와) 겹쳐요` } : { ok: true, other };
+}
