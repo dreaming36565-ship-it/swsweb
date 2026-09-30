@@ -31,6 +31,8 @@ export const PERMISSIONS = {
   "sr.desk": ["ADMIN", "DESK"],
   /** 월초 자리 정리 */
   "sr.pack": ["ADMIN"],
+  /** 🙋 SR 자리 요청 기록 지우기 (테스트 기록 정리) */
+  "sr.purge": ["ADMIN"],
   "attendance.teacher": ["ADMIN", "TEACHER"],
   "attendance.desk": ["ADMIN", "DESK"],
   "attendance.read": ["ADMIN", "TEACHER", "DESK"],

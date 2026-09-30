@@ -5,7 +5,7 @@ import { parseDays, parseRoles } from "../auth";
 import { assert } from "../errors";
 import { rebuildSrSeats, srRoster } from "../seed";
 import { SEATS, movableSeatsFor, seatBlocker, type Level, type SeatUse, type SrBlock } from "../sr";
-import { DAY_LABELS, clockLabel, fmtTime, parseDateKey, rangeLabel } from "../time";
+import { DAY_LABELS, addDaysKey, clockLabel, fmtTime, parseDateKey, rangeLabel } from "../time";
 import { teacherLabel, type MissionRequest, type SessionType, type SessionUser } from "../types";
 import { can } from "../perm";
 import { getSetting, notify, nowIso, nowMin, row, rows, setSetting, today, transaction, userIdsWithRole } from "./base";
@@ -91,7 +91,9 @@ export type SrSnapshot = {
   requests: SrSeatRequest[];
   /** 🙋 오늘 SR 자리 요청 (임시 자리) */
   adhocRequests: SrAdhocRequest[];
-  log: { date: string; atMin: number; text: string }[];
+  /** 최근 7일 SR 자리 요청 전부 (관리자 🗑 지우기용) */
+  adhocRecent: SrAdhocRequest[];
+  log:{ date: string; atMin: number; text: string }[];
   overflow: { classId: number; studentId: number }[];
   /** 요일마다 수업이 있는 모든 반 — 반 색을 시간표와 똑같이 맞추려고 */
   dayClassIds: Record<number, number[]>;
@@ -233,7 +235,8 @@ export function srSnapshot(date: string): SrSnapshot {
   const dayClassIds: Record<number, number[]> = {};
   for (const s of listAllSessions()) (dayClassIds[s.dayOfWeek] ??= []).push(s.classId);
   const adhocRequests = adhocRequestsOn(today());
-  return { date, day, nowMin: nowMin(), classes, blocks, dayBlocks, seats, weekUses, dayUses, adhoc, leave, absent, missions, requests, adhocRequests, log, overflow, dayClassIds };
+  const adhocRecent = rows<SrAdhocRequest>(db.prepare(`${ADHOC_REQ_SELECT} WHERE q.date >= ? ORDER BY q.id DESC LIMIT 30`).all(addDaysKey(today(), -7)));
+  return { date, day, nowMin: nowMin(), classes, blocks, dayBlocks, seats, weekUses, dayUses, adhoc, leave, absent, missions, requests, adhocRequests, adhocRecent, log, overflow, dayClassIds };
 }
 
 function addLog(date: string, text: string): void {
@@ -354,17 +357,12 @@ export function srDeleteAdhoc(user: SessionUser, id: number): void {
 
 /* ------------------------------------------------------------ 🙋 SR 자리 요청 (임시 자리) */
 
-function adhocRequestsOn(date: string): SrAdhocRequest[] {
-  return rows<SrAdhocRequest>(
-    getDb()
-      .prepare(
-        `SELECT q.id, q.date, q.name, q.kind, q.start_min AS start, q.end_min AS end, q.memo, q.requested_by AS requestedBy,
+const ADHOC_REQ_SELECT = `SELECT q.id, q.date, q.name, q.kind, q.start_min AS start, q.end_min AS end, q.memo, q.requested_by AS requestedBy,
                 u.name AS requestedByName, q.at_min AS atMin, q.state, q.seat, d.name AS decidedByName
-           FROM sr_adhoc_requests q LEFT JOIN users u ON u.id = q.requested_by LEFT JOIN users d ON d.id = q.decided_by
-          WHERE q.date = ? ORDER BY q.id DESC`,
-      )
-      .all(date),
-  );
+           FROM sr_adhoc_requests q LEFT JOIN users u ON u.id = q.requested_by LEFT JOIN users d ON d.id = q.decided_by`;
+
+function adhocRequestsOn(date: string): SrAdhocRequest[] {
+  return rows<SrAdhocRequest>(getDb().prepare(`${ADHOC_REQ_SELECT} WHERE q.date = ? ORDER BY q.id DESC`).all(date));
 }
 
 const adhocWhat = (r: { name: string; kind: string; start_min: number; end_min: number }) => `${r.name} ${r.kind} · ${rangeLabel(r.start_min, r.end_min)}`;
@@ -424,6 +422,34 @@ export function srAdhocAnswer(user: SessionUser, id: number, ok: boolean, seat?:
       ok ? `${r.name} ${seat} · ${rangeLabel(r.start_min, r.end_min)} · ${r.kind}` : adhocWhat(r),
       "/sr",
     );
+}
+
+/**
+ * 🗑 요청 기록 지우기 (관리자) — 베타테스트처럼 남기면 안 되는 요청을 흔적 없이 지운다.
+ * 요청 + 배정된 임시 자리 + 📝 기록 줄 + 선생님 알림을 한 번에.
+ */
+export function srAdhocPurge(user: SessionUser, id: number): void {
+  assert(can(user, "sr.purge"), "요청 기록은 관리자만 지울 수 있어요.");
+  const db = getDb();
+  const r = row<{ id: number; date: string; name: string; kind: string; start_min: number; end_min: number; state: string; seat: string | null; requested_by: number | null }>(
+    db.prepare("SELECT * FROM sr_adhoc_requests WHERE id = ?").get(id),
+  );
+  assert(r, "요청을 찾을 수 없어요. 이미 지워졌을 수 있어요.");
+  const req = row<{ name: string }>(db.prepare("SELECT name FROM users WHERE id = ?").get(r.requested_by ?? 0));
+  const tail = `(${teacherLabel(req?.name)} 요청)`;
+  // srAdhocAnswer 가 남긴 기록 줄 · 알림 문구와 똑같이 맞춰 찾는다
+  const logEnds = [`배정 · 📌 ${r.name} ${r.kind} ${r.seat ?? ""} ${tail}`, `거절 · ${r.name} ${r.kind} ${tail}`];
+  const bodies = [`${r.name} ${r.seat ?? ""} · ${rangeLabel(r.start_min, r.end_min)} · ${r.kind}`, adhocWhat(r)];
+  transaction(() => {
+    if (r.state === "OK" && r.seat)
+      db.prepare(
+        "DELETE FROM sr_adhoc WHERE id = (SELECT id FROM sr_adhoc WHERE date = ? AND name = ? AND kind = ? AND start_min = ? AND end_min = ? AND seat = ? ORDER BY id LIMIT 1)",
+      ).run(r.date, r.name, r.kind, r.start_min, r.end_min, r.seat);
+    for (const end of logEnds) db.prepare("DELETE FROM sr_log WHERE date = ? AND substr(text, -length(?)) = ?").run(r.date, end, end);
+    if (r.requested_by)
+      for (const body of bodies) db.prepare("DELETE FROM notifications WHERE user_id = ? AND kind = 'SR_ADHOC_ANSWER' AND body = ?").run(r.requested_by, body);
+    db.prepare("DELETE FROM sr_adhoc_requests WHERE id = ?").run(id);
+  });
 }
 
 /**

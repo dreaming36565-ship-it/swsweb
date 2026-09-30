@@ -12,6 +12,7 @@ export default function Modal({
   footer,
   width = 560,
   closable = true,
+  top = false,
 }: {
   open: boolean;
   title: ReactNode;
@@ -21,6 +22,8 @@ export default function Modal({
   footer?: ReactNode;
   width?: number;
   closable?: boolean;
+  /** 다른 창 위에 뜨는 창 (확인창) */
+  top?: boolean;
 }) {
   useEffect(() => {
     if (!open || !closable || !onClose) return;
@@ -34,7 +37,7 @@ export default function Modal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy-950/40 p-6 fade-in print:hidden">
+    <div className={`fixed inset-0 ${top ? "z-[80]" : "z-50"} flex items-center justify-center bg-navy-950/40 p-6 fade-in print:hidden`}>
       <div
         className="card pop-in flex max-h-[88vh] w-full flex-col overflow-hidden"
         style={{ maxWidth: width }}

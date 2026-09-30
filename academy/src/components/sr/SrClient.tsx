@@ -50,6 +50,8 @@ export default function SrClient({ user }: { user: SessionUser }) {
   /** 🙋 SR 자리 요청 — 선생님 요청 창 / 데스크 배정 창 */
   const [adhocAsk, setAdhocAsk] = useState(false);
   const [adhocAnswer, setAdhocAnswer] = useState<SrAdhocRequest | null>(null);
+  /** 🗑 요청 기록 지우기 (관리자) */
+  const [purge, setPurge] = useState(false);
   const waitCount = useRef<number | null>(null);
 
   const dayDate = weekDateOf(day);
@@ -162,6 +164,11 @@ export default function SrClient({ user }: { user: SessionUser }) {
           {can(user, "sr.pack") ? (
             <button type="button" className="btn" onClick={() => void pack()}>
               🧹 월초 자리 정리
+            </button>
+          ) : null}
+          {can(user, "sr.purge") ? (
+            <button type="button" className="btn" onClick={() => setPurge(true)}>
+              🗑 요청 기록 지우기
             </button>
           ) : null}
         </div>
@@ -304,6 +311,24 @@ export default function SrClient({ user }: { user: SessionUser }) {
         />
       ) : null}
 
+      {purge && live ? (
+        <PurgeModal
+          list={live.adhocRecent}
+          onClose={() => setPurge(false)}
+          onPurge={async (r) => {
+            if (!(await confirm({ title: "요청 기록을 지울까요?", message: <PurgeWhat r={r} />, confirmText: "지우기", danger: true }))) return null;
+            try {
+              await apiPost("/api/sr/action", { action: "ADHOC_PURGE", id: r.id });
+              await reload();
+              setToast("지움");
+              return null;
+            } catch (e) {
+              return errorMessage(e);
+            }
+          }}
+        />
+      ) : null}
+
       {toast ? (
         <div className="fixed bottom-6 left-1/2 z-[90] -translate-x-1/2 rounded-xl bg-navy-900 px-5 py-2.5 text-sm font-semibold text-white print:hidden">{toast}</div>
       ) : null}
@@ -380,6 +405,47 @@ function AdhocRequestPanel({
         </div>
       ))}
     </div>
+  );
+}
+
+/** 🗑 요청 기록 지우기 (관리자) — 테스트 요청을 흔적 없이. 요청 · 임시 자리 · 📝 기록 · 선생님 알림 */
+const PURGE_ST = { WAIT: "⏳ 대기", NO: "❌ 거절", CANCEL: "취소" } as const;
+
+function PurgeWhat({ r }: { r: SrAdhocRequest }) {
+  return (
+    <>
+      <b>{r.name}</b> {r.kind} · {monthDay(r.date)} {rangeLabel(r.start, r.end)}
+      <br />
+      <span className="text-muted">요청 · 임시 자리 · 📝 기록 · 알림이 함께 지워져요. 되돌릴 수 없어요.</span>
+    </>
+  );
+}
+
+function PurgeModal({ list, onClose, onPurge }: { list: SrAdhocRequest[]; onClose: () => void; onPurge: (r: SrAdhocRequest) => Promise<string | null> }) {
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <Modal open width={620} title="🗑 요청 기록 지우기" subtitle="🙋 SR 자리 요청 · 최근 7일 · 테스트 기록 정리용" onClose={onClose}>
+      {list.length === 0 ? <p className="text-sm text-muted">최근 7일 요청이 없어요.</p> : null}
+      {list.map((r) => (
+        <div key={r.id} className="flex items-center justify-between gap-2 border-b border-line py-2 text-sm last:border-b-0">
+          <span>
+            <span className="text-muted">{monthDay(r.date)}</span> <b>{teacherLabel(r.requestedByName)}</b> · <b>{r.name}</b> {r.kind} · {rangeLabel(r.start, r.end)}{" "}
+            <span className="text-muted">{r.state === "OK" ? `✅ ${r.seat} 배정` : PURGE_ST[r.state]}</span>
+          </span>
+          <button
+            type="button"
+            className="btn whitespace-nowrap px-2.5 py-0.5 text-xs text-alert"
+            onClick={async () => {
+              setError(null);
+              setError(await onPurge(r));
+            }}
+          >
+            지우기
+          </button>
+        </div>
+      ))}
+      {error ? <p className="mt-2 text-sm font-semibold text-alert">{error}</p> : null}
+    </Modal>
   );
 }
 

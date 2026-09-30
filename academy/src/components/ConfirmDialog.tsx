@@ -73,6 +73,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         title={options?.title ?? ""}
         onClose={() => close(false)}
         width={440}
+        top
         footer={
           <>
             <button
