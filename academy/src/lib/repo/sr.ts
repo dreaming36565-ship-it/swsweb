@@ -5,7 +5,7 @@ import { parseDays, parseRoles } from "../auth";
 import { assert } from "../errors";
 import { planSrSeats, rebuildSrSeats, srRoster } from "../seed";
 import { SEATS, SEAT_ROWS, classMoveOptions, movableSeatsFor, seatBlocker, seatCol, seatRow, srRulesFor, type Level, type SeatUse, type SrBlock } from "../sr";
-import { DAY_LABELS, addDaysKey, clockLabel, fmtTime, parseDateKey, rangeLabel } from "../time";
+import { DAY_LABELS, addDaysKey, clockLabel, fmtTime, monthDay, parseDateKey, rangeLabel } from "../time";
 import { teacherLabel, type MissionRequest, type SessionType, type SessionUser } from "../types";
 import { can } from "../perm";
 import { getSetting, notify, nowIso, nowMin, row, rows, setSetting, today, transaction, userIdsWithRole } from "./base";
@@ -97,8 +97,8 @@ export type SrSnapshot = {
   overflow: { classId: number; studentId: number }[];
   /** 요일마다 수업이 있는 모든 반 — 반 색을 시간표와 똑같이 맞추려고 */
   dayClassIds: Record<number, number[]>;
-  /** 📅 다음 달 자리 미리보기일 때 — 저장 안 한 계산 결과 */
-  preview?: { month: string; changed: number };
+  /** 📅 다음 달 자리 미리보기일 때 — 계산 결과 (📌 확정했으면 확정한 자리) */
+  preview?: { month: string; changed: number; confirmed: { at: string; by: string } | null };
 };
 
 const dayOf = (date: string) => parseDateKey(date).getDay();
@@ -174,11 +174,49 @@ const planRows = (plan: ReturnType<typeof planSrSeats>) => [...plan.seats.values
  * 📅 다음 달 자리 미리보기 — 지금 명단(다음 달 숙제반 신청 포함) · 다음 달 규칙으로 처음부터 앉혀 본 모습. 저장 안 함.
  * date 는 보고 싶은 요일을 고르는 데만 쓴다 (임시 자리 · 하원 · 결석은 없음).
  */
+/* ------------------------------------------------------------ 📌 다음 달 자리 확정 */
+
+type SrConfirmed = { month: string; at: string; by: string; seats: { classId: number; studentId: number; seat: string }[] };
+const CONFIRM_KEY = "sr_confirmed_next";
+
+function confirmedFor(month: string): SrConfirmed | null {
+  const raw = getSetting(CONFIRM_KEY);
+  if (!raw) return null;
+  try {
+    const c = JSON.parse(raw) as SrConfirmed;
+    return c.month === month ? c : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 📌 다음 달 자리 확정 (관리자) — 지금 미리보기 자리를 저장. 1일 자동 정리는 새로 계산하지 않고 이 자리를 쓴다
+ * (그 사이 새로 온 학생만 빈자리에, 빠진 학생 자리는 비움). undo = 확정 풀기.
+ */
+export function srConfirmNext(user: SessionUser, undo = false): void {
+  assert(can(user, "sr.pack"), "자리 확정은 관리자만 할 수 있어요.");
+  const first = nextMonthFirst();
+  const month = first.slice(0, 7);
+  if (undo) {
+    setSetting(CONFIRM_KEY, null);
+    addLog(today(), `${who(user)} · 📌 ${Number(month.slice(5))}월 자리 확정 풀기`);
+    return;
+  }
+  const conf = confirmedFor(month);
+  const plan = planSrSeats(getDb(), conf ? { base: conf.seats, date: first } : { fresh: true, date: first });
+  const seats = [...plan.seats.values()].map(({ classId, studentId, seat }) => ({ classId, studentId, seat }));
+  const at = `${monthDay(today())} ${fmtTime(nowMin())}`;
+  setSetting(CONFIRM_KEY, JSON.stringify({ month, at, by: who(user), seats } satisfies SrConfirmed));
+  addLog(today(), `${who(user)} · 📌 ${Number(month.slice(5))}월 자리 확정 (${seats.length}명)`);
+}
+
 function srPreviewSnapshot(date: string): SrSnapshot {
   const first = nextMonthFirst();
   const day = dayOf(date);
   const { list: classes, memberDays, blocks } = srClasses(first);
-  const plan = planSrSeats(getDb(), { fresh: true, date: first });
+  const conf = confirmedFor(first.slice(0, 7));
+  const plan = planSrSeats(getDb(), conf ? { base: conf.seats, date: first } : { fresh: true, date: first });
   const seats = planRows(plan);
   const weekly = new Map(seats.map((x) => [`${x.classId}|${x.studentId}`, x.seat]));
   const weekUses = usesFrom(classes, blocks, (c, st) => weekly.get(`${c}|${st}`) ?? null, memberDays);
@@ -189,7 +227,7 @@ function srPreviewSnapshot(date: string): SrSnapshot {
   return {
     date, day, nowMin: nowMin(), classes, blocks, dayBlocks: blocks.filter((b) => b.day === day), seats, weekUses,
     dayUses: weekUses.filter((u) => u.day === day), adhoc: [], leave: [], absent: [], missions: [], requests: [], adhocRequests: [], adhocRecent: [],
-    log: [], overflow: plan.overflow, dayClassIds, preview: { month: first.slice(0, 7), changed },
+    log: [], overflow: plan.overflow, dayClassIds, preview: { month: first.slice(0, 7), changed, confirmed: conf ? { at: conf.at, by: conf.by } : null },
   };
 }
 
@@ -609,7 +647,13 @@ export type SrPackMode = "PACK" | "RESET";
 
 export function srPack(user: SessionUser | null, mode: SrPackMode = "PACK"): void {
   if (user) assert(can(user, "sr.pack"), "자리 정리는 관리자만 할 수 있어요.");
-  rebuildSrSeats(getDb(), mode === "RESET" ? { fresh: true } : { pack: true });
+  // 매달 1일 자동: 📌 확정한 자리가 있으면 그 자리로 (새로 온 학생만 빈자리에)
+  const conf = user ? null : confirmedFor(today().slice(0, 7));
+  rebuildSrSeats(getDb(), conf ? { base: conf.seats } : mode === "RESET" ? { fresh: true } : { pack: true });
+  if (conf) {
+    setSetting(CONFIRM_KEY, null);
+    addLog(today(), `📌 ${Number(conf.month.slice(5))}월 확정 자리로 바꿈 (매달 1일 자동 · ${conf.by} 확정)`);
+  }
   setSetting("sr_packed_month", today().slice(0, 7));
   const what = mode === "RESET" ? "처음부터 다시 앉히기" : "앞으로 당기기";
   addLog(today(), user ? `${who(user)} · 🧹 자리 정리 (${what})` : `🧹 월초 자리 정리 · ${what} (매달 1일 자동)`);

@@ -224,6 +224,23 @@ export default function SrClient({ user }: { user: SessionUser }) {
           move={view === "next" ? null : move}
           adhoc={view === "next" ? null : adhoc}
           preview={view === "next"}
+          onConfirmNext={
+            can(user, "sr.pack")
+              ? async (undo) => {
+                  const m = nextMonth;
+                  const yes = await confirm(
+                    undo
+                      ? { title: `${m}월 자리 확정을 풀까요?`, message: `${m}/1에 그날 명단으로 새로 계산해요.`, confirmText: "확정 풀기" }
+                      : {
+                          title: `📌 ${m}월 자리를 확정할까요?`,
+                          message: `지금 보이는 자리 그대로 ${m}/1에 바뀌어요. 그 사이 새로 온 학생만 빈자리에 앉고, 빠진 학생 자리는 비워요. 확정한 뒤 인쇄하세요.`,
+                          confirmText: "확정",
+                        },
+                  );
+                  if (yes) void act({ action: "CONFIRM_NEXT", undo }, undo ? "확정 풀었어요" : `📌 ${m}월 자리 확정`);
+                }
+              : undefined
+          }
           classMove={view === "next" ? null : classMove}
           onClassMove={(id) => {
             setMove(null);
@@ -990,6 +1007,7 @@ function DayView({
   onStudent,
   preview,
   classMove,
+  onConfirmNext,
   onClassMove,
   onPickClassCol,
 }: {
@@ -998,6 +1016,8 @@ function DayView({
   /** 📅 다음 달 자리 미리보기 — 보기만 */
   preview?: boolean;
   classMove: number | null;
+  /** 📌 다음 달 자리 확정 (관리자) — undo = 확정 풀기 */
+  onConfirmNext?: (undo: boolean) => void;
   onClassMove: (classId: number) => void;
   onPickClassCol: (col: string) => void;
   day: number;
@@ -1133,9 +1153,30 @@ function DayView({
         </div>
       ) : null}
       {preview && snap.preview ? (
-        <div className="rounded-xl border border-srpink-soft bg-srpink-soft px-4 py-2.5 text-sm text-srpink">
-          <b>📅 {Number(snap.preview.month.slice(5))}월 자리 미리보기</b> — 지금 명단(다음 달 숙제반 신청 포함) · 새 규칙으로 처음부터 앉혀 본 모습이에요. 저장 안 함 ·{" "}
-          <b>{Number(snap.preview.month.slice(5))}/1에 저절로 이렇게</b> 바뀌어요. 지금과 달라지는 학생 <b>{snap.preview.changed}명</b>
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-srpink-soft bg-srpink-soft px-4 py-2.5 text-sm text-srpink">
+          {snap.preview.confirmed ? (
+            <span>
+              <b>📌 {Number(snap.preview.month.slice(5))}월 자리 확정됨</b> ({snap.preview.confirmed.by} · {snap.preview.confirmed.at}) — {Number(snap.preview.month.slice(5))}/1에{" "}
+              <b>이 자리 그대로</b> 바뀌어요. 그 사이 새로 온 학생만 빈자리에. 지금과 달라지는 학생 <b>{snap.preview.changed}명</b>
+            </span>
+          ) : (
+            <span>
+              <b>📅 {Number(snap.preview.month.slice(5))}월 자리 미리보기</b> — 지금 명단(다음 달 숙제반 신청 포함) · 새 규칙으로 처음부터 앉혀 본 모습이에요. 아직 확정 전 · 명단이 바뀌면
+              달라져요. 지금과 달라지는 학생 <b>{snap.preview.changed}명</b>
+            </span>
+          )}
+          {onConfirmNext ? (
+            <span className="flex shrink-0 gap-1.5">
+              {snap.preview.confirmed ? (
+                <button type="button" className="btn px-2.5 py-1 text-xs" onClick={() => onConfirmNext(true)}>
+                  확정 풀기
+                </button>
+              ) : null}
+              <button type="button" className="btn btn-primary px-2.5 py-1 text-xs" onClick={() => onConfirmNext(false)}>
+                📌 {snap.preview.confirmed ? "다시 확정" : `${Number(snap.preview.month.slice(5))}월 자리 확정`}
+              </button>
+            </span>
+          ) : null}
         </div>
       ) : monthEnd ? (
         <div className="rounded-xl border border-late bg-late-soft px-4 py-2.5 text-sm font-bold text-late">📅 다음 달 1일에 자리를 처음부터 다시 정리해요 — 「📅 다음 달 자리 미리보기」에서 미리 볼 수 있어요.</div>

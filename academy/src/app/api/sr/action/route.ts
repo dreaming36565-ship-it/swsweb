@@ -1,6 +1,6 @@
 import { readJson, withUser } from "@/lib/api";
 import { assert } from "@/lib/errors";
-import { srAddAdhoc, srAdhocAnswer, srAdhocCancel, srAdhocPurge, srAdhocRequest, srAnswer, srDeleteAdhoc, srMission, srMissionCheck, srMove, srMoveClass, srPack, srRequest, srToggleLeave } from "@/lib/repo";
+import { srAddAdhoc, srAdhocAnswer, srAdhocCancel, srAdhocPurge, srAdhocRequest, srAnswer, srConfirmNext, srDeleteAdhoc, srMission, srMissionCheck, srMove, srMoveClass, srPack, srRequest, srToggleLeave } from "@/lib/repo";
 
 type Body =
   /** ↔ 자리 바꾸기 (데스크·관리자) */
@@ -27,7 +27,9 @@ type Body =
   /** 🧹 자리 정리 — PACK 앞으로 당기기 / RESET 처음부터 다시 앉히기 */
   | { action: "PACK"; mode?: "PACK" | "RESET" }
   /** ↔ 반 통째로 옮기기 · 맞바꾸기 (데스크·관리자) */
-  | { action: "MOVE_CLASS"; classId: number; col: string };
+  | { action: "MOVE_CLASS"; classId: number; col: string }
+  /** 📌 다음 달 자리 확정 / 확정 풀기 (관리자) */
+  | { action: "CONFIRM_NEXT"; undo?: boolean };
 
 export const POST = withUser(async ({ user, req }) => {
   const b = await readJson<Body>(req);
@@ -70,6 +72,9 @@ export const POST = withUser(async ({ user, req }) => {
       break;
     case "PACK":
       srPack(user, b.mode === "RESET" ? "RESET" : "PACK");
+      break;
+    case "CONFIRM_NEXT":
+      srConfirmNext(user, b.undo === true);
       break;
     case "MOVE_CLASS":
       srMoveClass(user, b.classId, b.col);
