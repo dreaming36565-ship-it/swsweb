@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useConfirm } from "./ConfirmDialog";
 import { IconTrash } from "./Icons";
-import { apiDelete, apiGet, apiPost, errorMessage } from "@/lib/http";
+import { apiDelete, apiGet, apiPatch, apiPost, errorMessage } from "@/lib/http";
 import { DEPARTMENTS, type Department, type Notice, type Notification, type SessionUser } from "@/lib/types";
 
 export default function NoticesClient({ user }: { user: SessionUser }) {
@@ -18,6 +18,8 @@ export default function NoticesClient({ user }: { user: SessionUser }) {
   const [target, setTarget] = useState<"ALL" | Department>("ALL");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** 고치는 중인 공지 */
+  const [edit, setEdit] = useState<{ id: number; title: string; body: string; department: "ALL" | Department; error: string | null } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -48,6 +50,17 @@ export default function NoticesClient({ user }: { user: SessionUser }) {
       setError(errorMessage(e));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const saveEdit = async () => {
+    if (!edit) return;
+    try {
+      await apiPatch("/api/notices", { id: edit.id, title: edit.title, body: edit.body, department: edit.department });
+      setEdit(null);
+      await load();
+    } catch (e) {
+      setEdit({ ...edit, error: errorMessage(e) });
     }
   };
 
@@ -117,7 +130,36 @@ export default function NoticesClient({ user }: { user: SessionUser }) {
             {notices.length === 0 ? (
               <p className="text-sm text-muted">등록된 공지가 없습니다.</p>
             ) : (
-              notices.map((n) => (
+              notices.map((n) =>
+                edit?.id === n.id ? (
+                <article key={n.id} className="rounded-lg border-2 border-navy-300 p-4">
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="min-w-[200px] flex-1">
+                      <label className="label">제목</label>
+                      <input className="field" value={edit.title} autoFocus onChange={(e) => setEdit({ ...edit, title: e.target.value })} />
+                    </div>
+                    <div className="w-32">
+                      <label className="label">대상</label>
+                      <select className="field" value={edit.department} onChange={(e) => setEdit({ ...edit, department: e.target.value as "ALL" | Department })}>
+                        <option value="ALL">전체</option>
+                        <option value="ELEM">초중등부</option>
+                        <option value="HIGH">고등부</option>
+                      </select>
+                    </div>
+                  </div>
+                  <label className="label mt-2">내용</label>
+                  <textarea className="field min-h-24" value={edit.body} onChange={(e) => setEdit({ ...edit, body: e.target.value })} />
+                  {edit.error ? <div className="mt-2 text-sm font-semibold text-alert">{edit.error}</div> : null}
+                  <div className="mt-2 flex justify-end gap-1.5">
+                    <button type="button" className="btn" onClick={() => setEdit(null)}>
+                      취소
+                    </button>
+                    <button type="button" className="btn btn-primary" onClick={() => void saveEdit()}>
+                      저장
+                    </button>
+                  </div>
+                </article>
+                ) : (
                 <article key={n.id} className="rounded-lg border border-line p-4">
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-bold text-ink">{n.title}</h3>
@@ -125,7 +167,17 @@ export default function NoticesClient({ user }: { user: SessionUser }) {
                       {n.department === "ALL" ? "전체" : DEPARTMENTS[n.department as Department].dept}
                     </span>
                     {canWrite ? (
-                      <button type="button" className="btn btn-ghost ml-auto px-2 py-1 text-alert" onClick={() => void remove(n)} aria-label="공지 지우기" title="공지 지우기">
+                      <button
+                        type="button"
+                        className="btn btn-ghost ml-auto px-2 py-1 text-xs"
+                        onClick={() => setEdit({ id: n.id, title: n.title, body: n.body, department: (n.department as "ALL" | Department) ?? "ALL", error: null })}
+                        title="공지 고치기"
+                      >
+                        ✏️ 고치기
+                      </button>
+                    ) : null}
+                    {canWrite ? (
+                      <button type="button" className="btn btn-ghost px-2 py-1 text-alert" onClick={() => void remove(n)} aria-label="공지 지우기" title="공지 지우기">
                         <IconTrash className="h-4 w-4" />
                       </button>
                     ) : null}
@@ -135,7 +187,8 @@ export default function NoticesClient({ user }: { user: SessionUser }) {
                     {n.authorName ?? "관리자"} · {new Date(n.createdAt).toLocaleString("ko-KR")}
                   </div>
                 </article>
-              ))
+                ),
+              )
             )}
           </div>
         </section>

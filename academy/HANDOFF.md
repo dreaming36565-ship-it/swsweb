@@ -20,7 +20,7 @@ academy 폴더의 학원 관리 웹앱을 이어서 개발할 거야.
 - 작업 후 npm run build 로 타입체크하고, 브라우저에서 실제로 눌러 확인할 것
 ```
 
-> 맨 아래 **"15. 진행 상황"** 의 **15.18**(2026-09-30, 운영 시간표 코딩 · Railway 배포 준비)을 먼저 읽을 것. 배포 방법 = `academy/DEPLOY.md`.
+> 맨 아래 **"15. 진행 상황"** 의 **15.18 ~ 15.20**(2026-09-30, 운영 시간표 · Railway 배포 완료 · 실사용 시작)을 먼저 읽을 것. 배포 방법 = `academy/DEPLOY.md`.
 
 ---
 
@@ -368,7 +368,10 @@ academy/src/
 | GET | `/api/attendance/list?date=&dept=` | 결석관리 페이지 · `?events=` 알림함 결과 표 |
 | GET/POST | `/api/absences` | 결석보강 — `UPDATE` · `ADD_ROUND` · `ROUND_STATE` · `ROUND_DELETE` · `CARRY_*` · `PRE_REGISTER` · `DELETE`, `?preview=학생&from=&to=` |
 | GET/POST | `/api/homework` | 숙제 — `MARK` · `CERT` · `PLAN` · `FORCED_SLOT` · `SEEN` · `APPLY` · `UNAPPLY` · `LATE_*` · `FORM_*`, `?form=YYYY-MM` 설문 응답 읽기 |
-| GET/POST | `/api/notices` · `/api/notifications` · `/api/tasks` | |
+| GET/POST/PATCH/DELETE | `/api/notices` | 공지 (고치기 · 지우기 = 관리자) |
+| GET/POST | `/api/notifications` · `/api/tasks` | |
+| GET/POST | `/api/backup` | 백업 받기(`?list=1` 목록 · `?file=` 자동 백업) · 올리기(form-data file) — 관리자 |
+| POST | `/api/timetable/snapshot` | 📸 분기 마감 저장 (관리자) |
 | GET | `/api/mockup-data` | 시안(public/mockups, git 제외)용 데이터 — 로그인 필요 |
 
 응답 형식은 항상 `{ ok: true, data }` 또는 `{ ok: false, error: "한국어 메시지" }`.
@@ -768,10 +771,18 @@ npm run dev --prefix academy     # http://127.0.0.1:3100 (localhost 가 안 열�
 - **🔑 비상 비밀번호 초기화**: Railway 변수 `ACADEMY_RESET_PASSWORD=이름` → 서버가 켜질 때 그 계정 1234 + 새 비밀번호 강제(`db.ts` `emergencyReset`). 로그인 후 변수 삭제. (배포 첫날 관리자 로그인이 안 돼서 만듦)
 - 배포 주소: **https://swsweb-production.up.railway.app** (Railway 프로젝트 「열정을 실현하다」 · 서비스 swsweb · 싱가포르 · 볼륨 /data · 체험 요금제 30일/$5).
 
-### 15.19 다음에 할 일 (2026-09-30)
-1. **배포** — 사용자 허락 후 커밋 · push → 사용자가 Railway 가입 · 결제 · 저장소 연결 · Root Directory `academy` · 볼륨 `/data` · 주소 만들기(`DEPLOY.md`) → 이 컴퓨터에서 💾 백업 받기 → 서버에 📤 올리기 → 직원 안내.
-2. **사용자 확인**: 운영 시간표 모양 · 인쇄 · 출결 팝업 「접기」 + 깜박이는 띠(실제 수업 시간) · 📷 인증 미확인 알림.
-3. 배포 뒤 주의: **실사용 자료는 서버에만** — `npm run seed` 는 이 컴퓨터 연습용. 스키마 변경은 반드시 마이그레이션(서버 자료를 지우지 않게).
+### 15.19 배포 완료 · 실사용 시작 (2026-09-30, 15회차 끝)
+- **배포됨**: https://swsweb-production.up.railway.app — Railway 프로젝트 「열정을 실현하다」 · 서비스 swsweb · Root Directory `academy` · 볼륨 `/data` · 지역 싱가포르 · **체험 요금제(30일 또는 $5)**.
+- 진짜 자료 = 이 컴퓨터 DB를 백업 파일로 만들어(`data/academy-backup-2026-09-30.db`, git 제외) 서버에 📤 올림. **이제 실사용 자료는 서버에만 있다.** 이 컴퓨터 DB는 연습용.
+- 배포 첫날 고친 것: ① 백업 올린 뒤 로그인하면 바로 로그인 화면으로 튕김 — 쿠키 비밀값을 모듈 변수에 두어서 화면 · API 가 서로 다른 값을 봄 → `globalThis` 로 공유(`auth.ts`).
+  ② 🔑 비상 비밀번호 초기화(Railway 변수 `ACADEMY_RESET_PASSWORD`). ③ 공지 **고치기 · 지우기**(관리자, 알림 & 공지 ✏️ · 🗑). 업무 지시는 원래 「전체」 보기에서 🗑.
+- **push = 자동 배포**: `main` 에 push 하면 Railway 가 2~5분 안에 다시 배포한다. 자료는 볼륨에 남는다. → **push 전 반드시 사용자 허락**(CLAUDE.md 배포 규칙).
+
+### 15.20 다음에 할 일
+1. **사용자에게 확인받을 것**: 관리자 로그인 · 진짜 이름 보이는지 · 직원 3명 「비밀번호 정하기」 · 예시 공지 3개 / 예시 업무 4개 지우기 · 직원들에게 주소 안내.
+2. **체험 끝나기 전 Hobby 요금제 업그레이드**(사용 한도 $10 권장) — 사용자가 직접.
+3. 실제 수업 시간에 확인: 운영 시간표 모양 · 인쇄 · 출결 팝업 「접기」 + 깜박이는 띠 · 📷 인증 미확인 알림 · 알바 근무 요일.
+4. 앞으로 고칠 때: 스키마 변경은 **반드시 마이그레이션**(서버 자료를 지우지 않게). `npm run seed` 는 이 컴퓨터 연습용. 큰 변경 전에는 설정 › 💾 지금 백업 받기를 권한다.
 
 ### 15.15 보강 일정 입력 쉽게 (2026-09-29)
 - 보강 관리 `메모` = 특이사항(보강 일정 아님) → 이름을 **특이사항**으로.

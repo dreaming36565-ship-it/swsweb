@@ -51,6 +51,17 @@ export function listNotices(dept: DeptFilter = "ALL", limit = 50): Notice[] {
   return rows<Notice>(db.prepare(sql).all(...args));
 }
 
+/** 공지 고치기 — 제목 · 내용 · 대상 (다시 알림은 보내지 않는다) */
+export function updateNotice(id: number, input: { title: string; body: string; department: string }): void {
+  assert(input.title.trim(), "공지 제목을 입력해 주세요.");
+  assert(input.body.trim(), "공지 내용을 입력해 주세요.");
+  const dept = ["ALL", "ELEM", "HIGH"].includes(input.department) ? input.department : "ALL";
+  const r = getDb()
+    .prepare("UPDATE notices SET title = ?, body = ?, department = ? WHERE id = ?")
+    .run(input.title.trim(), input.body.trim(), dept, id);
+  assert(Number(r.changes) > 0, "공지를 찾을 수 없습니다.");
+}
+
 export function deleteNotice(id: number): void {
   const r = getDb().prepare("DELETE FROM notices WHERE id = ?").run(id);
   assert(Number(r.changes) > 0, "공지를 찾을 수 없습니다.");
