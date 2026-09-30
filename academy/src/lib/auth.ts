@@ -8,21 +8,24 @@ import { ROLES, type Department, type Role, type SessionUser } from "./types";
 
 export const COOKIE_NAME = "academy_session";
 
-/** 쿠키 서명 비밀값 — 환경변수가 없으면 DB에 한 번 만들어 둔 무작위 값 (서버를 다시 켜도 로그인 유지) */
-let secret: string | null = process.env.ACADEMY_SECRET || null;
+/**
+ * 쿠키 서명 비밀값 — 환경변수가 없으면 DB에 한 번 만들어 둔 무작위 값 (서버를 다시 켜도 로그인 유지).
+ * ★ globalThis 에 둔다: Next.js 는 화면과 API 가 이 파일을 따로 불러와서, 모듈 변수로 두면
+ *   백업을 올린 뒤 한쪽만 새 값을 읽어 「로그인 → 바로 로그인 화면」이 된다(2026-09-30 배포 첫날 버그).
+ */
+const gs = globalThis as unknown as { __academySecret?: string | null };
 function getSecret(): string {
-  if (secret) return secret;
+  if (process.env.ACADEMY_SECRET) return process.env.ACADEMY_SECRET;
+  if (gs.__academySecret) return gs.__academySecret;
   const db = getDb();
-  const cur = db.prepare("SELECT value FROM app_settings WHERE key = 'session_secret'").get() as { value: string } | undefined;
-  if (cur?.value) return (secret = cur.value);
-  const made = randomBytes(32).toString("base64url");
-  db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('session_secret', ?)").run(made);
-  return (secret = made);
+  const read = () => (db.prepare("SELECT value FROM app_settings WHERE key = 'session_secret'").get() as { value: string } | undefined)?.value;
+  if (!read()) db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('session_secret', ?)").run(randomBytes(32).toString("base64url"));
+  return (gs.__academySecret = read()!);
 }
 
 /** 백업을 올려 DB가 바뀌면 비밀값을 새 DB에서 다시 읽는다 (모두 다시 로그인) */
 export function resetSecret(): void {
-  secret = process.env.ACADEMY_SECRET || null;
+  gs.__academySecret = null;
 }
 
 /* ------------------------------------------------------------------ 비밀번호 */
