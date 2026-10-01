@@ -64,7 +64,7 @@ export default function HomeworkClient({ user, initialView }: { user: SessionUse
   const [mine, setMine] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [modal, setModal] = useState<{ kind: "plan" | "late" | "apply" | "form" | "exempt" | "start"; studentId?: number; lateId?: number; trigger?: string } | null>(null);
+  const [modal, setModal] = useState<{ kind: "plan" | "late" | "apply" | "form" | "exempt" | "start"; studentId?: number; lateId?: number; trigger?: string; day?: number; slotId?: number } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -165,7 +165,7 @@ export default function HomeworkClient({ user, initialView }: { user: SessionUse
       )}
       {data && h && modal?.kind === "plan" && modal.studentId ? <PlanModal data={data} h={h} studentId={modal.studentId} act={act} onClose={() => setModal(null)} /> : null}
       {data && h && modal?.kind === "late" && modal.lateId ? <LateModal data={data} h={h} lateId={modal.lateId} act={act} onClose={() => setModal(null)} /> : null}
-      {data && h && modal?.kind === "apply" ? <ApplyModal data={data} h={h} months={months} studentId={modal.studentId} month={month} act={act} onClose={() => setModal(null)} onMonth={setMonth} /> : null}
+      {data && h && modal?.kind === "apply" ? <ApplyModal data={data} h={h} months={months} studentId={modal.studentId} preset={modal.day !== undefined && modal.slotId ? { day: modal.day, slotId: modal.slotId } : undefined} month={month} act={act} onClose={() => setModal(null)} onMonth={setMonth} /> : null}
       {data && modal?.kind === "exempt" ? (
         <ExemptModal
           data={data}
@@ -477,7 +477,7 @@ function ClassView({
   setMonth: (m: string) => void;
   months: string[];
   act: Act;
-  open: (m: { kind: "plan" | "late" | "apply" | "exempt" | "start"; studentId?: number; lateId?: number; trigger?: string }) => void;
+  open: (m: { kind: "plan" | "late" | "apply" | "exempt" | "start"; studentId?: number; lateId?: number; trigger?: string; day?: number; slotId?: number }) => void;
 }) {
   const edit = can(user, "homework.class");
   /** 📷 인증 확인 — 담당T(내 반) · 관리자 · 데스크 */
@@ -767,7 +767,16 @@ function ClassView({
 
       <div className="grid grid-cols-[1.4fr_1fr] gap-3">
         <div className="card px-4 py-2.5">
-          <b className="text-[15px]">🙋 신청 숙제반 — {Number(month.slice(5))}월</b> <span className="text-xs text-muted">출결 = 데스크 · 한 달 단위 신청</span>
+          <div className="flex items-center justify-between gap-2">
+            <span>
+              <b className="text-[15px]">🙋 신청 숙제반 — {Number(month.slice(5))}월</b> <span className="text-xs text-muted">출결 = 데스크 · 한 달 단위 신청</span>
+            </span>
+            {edit ? (
+              <button type="button" className="btn btn-primary px-2.5 py-1 text-xs" onClick={() => open({ kind: "apply" })}>
+                ＋ 신청 입력
+              </button>
+            ) : null}
+          </div>
           {data.slots.length === 0 ? <p className="text-sm text-muted">반 관리에 숙제반이 없어요.</p> : null}
           <table className="mt-1.5 w-full table-fixed border-collapse text-[13px]">
             <thead>
@@ -792,7 +801,7 @@ function ClassView({
                       const list = data.apply.filter((a) => a.slotId === sl.id && a.month === month && a.day === d);
                       return (
                         <td key={sl.id} className="border border-line px-1.5 py-1 align-top">
-                          {!sl.days.includes(d) ? <span className="text-xs text-muted">없음</span> : list.length === 0 ? <span className="text-xs text-muted">—</span> : null}
+                          {!sl.days.includes(d) ? <span className="text-xs text-muted">없음</span> : list.length === 0 && !edit ? <span className="text-xs text-muted">—</span> : null}
                           {list.map((a) => {
                             const st = h.student(a.studentId);
                             const f = st && !st.exempt ? h.tl(st, month).cur : null;
@@ -817,6 +826,16 @@ function ClassView({
                               </span>
                             );
                           })}
+                          {edit && sl.days.includes(d) ? (
+                            <button
+                              type="button"
+                              title={`${DAY_LABELS[d]} ${partNo(data.slots, sl)}부에 학생 넣기`}
+                              onClick={() => open({ kind: "apply", day: d, slotId: sl.id })}
+                              className="m-0.5 rounded-full border border-dashed border-line px-2 py-0.5 text-xs font-bold text-muted hover:bg-navy-50 hover:text-navy-800"
+                            >
+                              ＋
+                            </button>
+                          ) : null}
                         </td>
                       );
                     })}
@@ -824,7 +843,7 @@ function ClassView({
               ))}
             </tbody>
           </table>
-          <p className="mt-1 text-xs text-muted">요일마다 1부 · 2부 중 하나를 골라요. 이름을 누르면 고칠 수 있어요.</p>
+          <p className="mt-1 text-xs text-muted">학원으로 직접 신청 · 설문 신청을 바꾸는 경우: 칸의 <b>＋</b> 로 넣고, 이름을 누르면 요일 · 부 고치기 · 신청 취소. 요일마다 1부 · 2부 중 하나.</p>
         </div>
         <div className="card px-4 py-2.5">
           <b className="text-[15px]">⏰ 지각 3회 → 숙제반 1회</b>
@@ -1088,6 +1107,7 @@ function ApplyModal({
   h,
   months,
   studentId,
+  preset,
   month: initMonth,
   act,
   onClose,
@@ -1097,23 +1117,30 @@ function ApplyModal({
   h: Helpers;
   months: string[];
   studentId?: number;
+  /** 표의 ＋ 로 열면 그 요일 · 부를 미리 골라 둔다 */
+  preset?: { day: number; slotId: number };
   month: string;
   act: Act;
   onClose: () => void;
   onMonth: (m: string) => void;
 }) {
   const future = months.filter((m) => m >= data.today.slice(0, 7));
-  const [name, setName] = useState(() => (studentId ? h.student(studentId)?.name ?? "" : ""));
-  const [month, setMonth] = useState(() => (studentId && initMonth ? initMonth : future[0] ?? data.today.slice(0, 7)));
-  const st = data.students.find((s) => s.name === name.trim()) ?? null;
+  const [pick, setPick] = useState<ComboValue>(() => {
+    const s0 = studentId ? h.student(studentId) : undefined;
+    return { id: s0?.id ?? null, name: s0?.name ?? "" };
+  });
+  // 표에서 보고 있는 달 (지난 달이 아니면)
+  const [month, setMonth] = useState(() => (initMonth && (studentId || initMonth >= data.today.slice(0, 7)) ? initMonth : future[0] ?? data.today.slice(0, 7)));
+  const st = data.students.find((s) => s.id === pick.id) ?? null;
   const [picks, setPicks] = useState<Record<number, number | undefined>>({});
   const [error, setError] = useState<string | null>(null);
   // 학생 · 달이 바뀌면 이미 신청한 요일로 채운다
   useEffect(() => {
     const cur: Record<number, number> = {};
     if (st) for (const a of h.applyOf(st.id, month)) cur[a.day] = a.slotId;
+    if (preset) cur[preset.day] = preset.slotId;
     setPicks(cur);
-  }, [st?.id, month, h]);
+  }, [st?.id, month, h, preset?.day, preset?.slotId]);
   const slots = [...data.slots].sort((a, b) => a.start - b.start);
   const list = Object.entries(picks)
     .filter(([, v]) => v)
@@ -1150,12 +1177,19 @@ function ApplyModal({
       <div className="grid grid-cols-[1fr_120px] gap-2">
         <div>
           <label className="label">학생</label>
-          <input className="field" list="hw-names" placeholder="이름" value={name} onChange={(e) => setName(e.target.value)} disabled={!!studentId} />
-          <datalist id="hw-names">
-            {data.students.map((s) => (
-              <option key={s.id} value={s.name} />
-            ))}
-          </datalist>
+          {studentId ? (
+            <input className="field" value={pick.name} disabled />
+          ) : (
+            <Combobox
+              options={data.students.map((x) => ({ id: x.id, label: x.name, hint: x.regular?.name }))}
+              value={pick}
+              onChange={setPick}
+              placeholder="학생 이름"
+            />
+          )}
+          {st && !studentId && h.applyOf(st.id, month).length ? (
+            <p className="mt-1 text-xs font-semibold text-late">이미 {Number(month.slice(5))}월 신청이 있어요 — 아래에서 고치면 바뀌어요.</p>
+          ) : null}
         </div>
         <div>
           <label className="label">달</label>
