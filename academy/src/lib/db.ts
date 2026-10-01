@@ -9,7 +9,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
-import { seedDemo, importLocalRecords, rebuildSrSeats, upgradeHomeworkSlots, applyQ4Changes } from "./seed";
+import { seedDemo, importLocalRecords, rebuildSrSeats, upgradeHomeworkSlots, applyQ4Changes, seedSchools } from "./seed";
 
 // 배포 서버(Railway)는 볼륨(서버를 다시 올려도 지워지지 않는 저장 공간)에 저장한다.
 // 볼륨을 붙이면 Railway 가 RAILWAY_VOLUME_MOUNT_PATH 를 알려준다. 따로 정하려면 ACADEMY_DATA_DIR.
@@ -423,6 +423,57 @@ CREATE TABLE IF NOT EXISTS hw_start (
   PRIMARY KEY (student_id, trigger_date)
 );
 
+-- 🏫 학교 학사일정 — 학교 · 항목별 날짜 칸 · 교과서(출판사). level H 고등 · M 중등 · E 초등
+CREATE TABLE IF NOT EXISTS schools (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  level TEXT NOT NULL,
+  order_no INTEGER NOT NULL DEFAULT 0
+);
+-- 항목(1학기 중간 · 학부모총회 …) 날짜 칸 하나. start_date NULL = 「없음」(시트의 -). d40_sent = 시험대비 알림 보냄
+CREATE TABLE IF NOT EXISTS school_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  grades TEXT,
+  start_date TEXT,
+  end_date TEXT,
+  d40_sent INTEGER NOT NULL DEFAULT 0,
+  updated_by TEXT,
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_school_events_school ON school_events(school_id, kind);
+CREATE TABLE IF NOT EXISTS school_books (
+  school_id INTEGER NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  subject TEXT NOT NULL,
+  publisher TEXT NOT NULL,
+  updated_by TEXT,
+  updated_at TEXT,
+  PRIMARY KEY (school_id, subject)
+);
+
+-- 📝 상담기록 (고등부 선생님이 가르치는 학생 — 중3 포함). 학생 · 반 · 학년 · 학교급은 쓸 때 그대로 적어 둔다
+CREATE TABLE IF NOT EXISTS counsels (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT NOT NULL,
+  author_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  author_name TEXT NOT NULL,
+  student_id INTEGER REFERENCES students(id) ON DELETE SET NULL,
+  student_name TEXT NOT NULL,
+  class_name TEXT,
+  grade TEXT,
+  level TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  how TEXT NOT NULL,
+  target TEXT NOT NULL,
+  topic TEXT NOT NULL,
+  role TEXT NOT NULL,
+  text TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_counsels_date ON counsels(date);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -545,6 +596,12 @@ const MIGRATIONS: ((db: DatabaseSync) => void)[] = [
   },
   // 8: 강제 숙제반 시작일 바꾸기 hw_start (테이블은 SCHEMA) (2026-10-02)
   () => {},
+  // 9: 🏫 학교 학사일정 (테이블은 SCHEMA) — 2026 시트 자료 넣기 (2026-10-02)
+  (db) => {
+    seedSchools(db);
+  },
+  // 10: 📝 상담기록 counsels (테이블은 SCHEMA) (2026-10-02)
+  () => {},
 ];
 
 const g = globalThis as unknown as { __academyDb?: DatabaseSync; __academyDbReady?: Promise<void> };
@@ -562,6 +619,7 @@ function open(): DatabaseSync {
     try {
       db.exec(SCHEMA);
       seedDemo(db);
+      seedSchools(db);
       db.exec(`PRAGMA user_version = ${MIGRATIONS.length}`);
       db.exec("COMMIT");
     } catch (e) {

@@ -10,6 +10,8 @@ import type { DatabaseSync } from "node:sqlite";
 import { dateKey, toMin } from "./time";
 import { gradeLevel, planSeats, srRulesFor, type Level, type SrBlock } from "./sr";
 import { defaultPlan, isMark, quarterOf, timeline, type HwPlan, type HwSlot, type Mark } from "./homework";
+import { BOOK_SUBJECTS, EXAM_ALERT_DAYS, addDays, parseCell } from "./school";
+import { SCHOOL_SEED, SCHOOL_SEED_YEAR } from "./schoolSeed";
 
 /** 한 요일 묶음의 수업 시간. sr 이 있으면 그 시간에 SR룸을 쓴다. */
 type Slot = { days: number[]; start: string; end: string; sr?: [string, string] };
@@ -789,6 +791,37 @@ export function applyQ4Changes(db: DatabaseSync): void {
 }
 
 /* ------------------------------------------------------------ 데모 데이터 */
+
+/**
+ * 🏫 학교 학사일정 처음 자료 (2026 시트) — 학교가 하나도 없을 때만.
+ * 오늘 기준 이미 D-40 이 지난 시험은 알림을 보낸 것으로 둔다 (처음 켰을 때 알림이 한꺼번에 쏟아지지 않게).
+ */
+export function seedSchools(db: DatabaseSync): void {
+  if ((q(db, "SELECT COUNT(*) AS n FROM schools").get() as { n: number }).n > 0) return;
+  const now = new Date().toISOString();
+  const today = dateKey(new Date());
+  const insSchool = db.prepare("INSERT INTO schools (name, level, order_no) VALUES (?, ?, ?)");
+  const insEvent = db.prepare(
+    "INSERT INTO school_events (school_id, kind, grades, start_date, end_date, d40_sent, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, '시트', ?)",
+  );
+  const insBook = db.prepare("INSERT INTO school_books (school_id, subject, publisher, updated_by, updated_at) VALUES (?, ?, ?, '시트', ?)");
+  const subjects = new Set(Object.values(BOOK_SUBJECTS).flat());
+  SCHOOL_SEED.forEach((s, i) => {
+    const id = Number(insSchool.run(s.name, s.level, i + 1).lastInsertRowid);
+    for (const [kind, text] of Object.entries(s.cells)) {
+      if (subjects.has(kind)) {
+        insBook.run(id, kind, text, now);
+        continue;
+      }
+      const ranges = parseCell(text, SCHOOL_SEED_YEAR);
+      if (!ranges.length) {
+        if (text.trim() === "-") insEvent.run(id, kind, null, null, null, 1, now);
+        continue;
+      }
+      for (const r of ranges) insEvent.run(id, kind, r.grades, r.from, r.to, addDays(r.from, -EXAM_ALERT_DAYS) < today ? 1 : 0, now);
+    }
+  });
+}
 
 export function seedDemo(db: DatabaseSync): void {
   const now = new Date().toISOString();

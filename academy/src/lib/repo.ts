@@ -10,3 +10,5 @@ export * from "./repo/absence";
 export * from "./repo/homework";
 export * from "./repo/misc";
 export * from "./repo/purge";
+export * from "./repo/school";
+export * from "./repo/counsel";

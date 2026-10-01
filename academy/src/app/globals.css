@@ -59,6 +59,17 @@
   --color-chg-b: #bdf0d2;
   --color-chg-ink: #3b2a00;
   --color-lvl: #7c3aed;
+  /* 🏫 학교 학사일정 — 시험 · 방학/개학/졸업 · 쉬는 날 · 행사 · 수능 */
+  --color-sc-ex: #dc2626;
+  --color-sc-ex-soft: #fee2e2;
+  --color-sc-vac: #1d4ed8;
+  --color-sc-vac-soft: #dbeafe;
+  --color-sc-off: #b45309;
+  --color-sc-off-soft: #fef3c7;
+  --color-sc-ev: #475569;
+  --color-sc-ev-soft: #e2e8f0;
+  --color-sc-sn: #6d28d9;
+  --color-sc-sn-soft: #ede9fe;
 
   --font-sans:
     Pretendard, "Pretendard Variable", -apple-system, BlinkMacSystemFont, "Malgun Gothic",

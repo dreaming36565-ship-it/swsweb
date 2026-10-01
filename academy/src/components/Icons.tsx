@@ -28,6 +28,13 @@ export const IconCalendar = ({ className }: Props) => (
   </svg>
 );
 
+export const IconSchool = ({ className }: Props) => (
+  <svg {...base(className)}>
+    <path d="M3 10l9-5 9 5-9 5-9-5z" />
+    <path d="M7 12.5V17c0 1.2 2.2 2.5 5 2.5s5-1.3 5-2.5v-4.5" />
+  </svg>
+);
+
 export const IconSeat = ({ className }: Props) => (
   <svg {...base(className)}>
     <rect x="3" y="3" width="7" height="7" rx="1.5" />

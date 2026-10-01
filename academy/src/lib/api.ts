@@ -21,7 +21,7 @@ type Handler = (ctx: { user: SessionUser; req: NextRequest }) => Promise<unknown
  * 4초 폴링(`/api/attendance/pending`)이 돌려주고, 열려 있는 시간표 · SR 화면은 버전이 바뀌면 다시 불러온다.
  * (다른 컴퓨터 · 다른 탭에서 고쳐도 새로고침 없이 반영)
  */
-const WATCHED = ["/api/classes", "/api/timetable", "/api/rooms", "/api/students", "/api/books", "/api/sr", "/api/homework", "/api/purge", "/api/backup"];
+const WATCHED = ["/api/classes", "/api/timetable", "/api/rooms", "/api/students", "/api/books", "/api/sr", "/api/homework", "/api/purge", "/api/backup", "/api/school", "/api/counsel"];
 const ver = globalThis as unknown as { __academyDataVer?: number };
 export const dataVersion = () => (ver.__academyDataVer ??= Date.now());
 const bumpData = () => {

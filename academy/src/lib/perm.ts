@@ -50,6 +50,8 @@ export const PERMISSIONS = {
   "users.write": ["ADMIN"],
   "notices.write": ["ADMIN"],
   "tasks.write": ["ADMIN"],
+  /** 🏫 학교 학사일정 고치기 (날짜 · 교과서) */
+  "school.write": ["ADMIN", "TEACHER", "DESK"],
   /** 🗑 실수·테스트 기록 지우기 (각 화면 🗑 · 설정 › 기록 정리) */
   "records.purge": ["ADMIN"],
 } as const satisfies Record<string, readonly Role[]>;
@@ -58,6 +60,18 @@ export type Permission = keyof typeof PERMISSIONS;
 
 export function can(user: Pick<SessionUser, "roles">, perm: Permission): boolean {
   return user.roles.some((r) => (PERMISSIONS[perm] as readonly Role[]).includes(r));
+}
+
+/**
+ * 📝 상담기록 — WRITE = 쓰기 · 전부 보기 (고등부 선생님 · 데스크 정직원 · 관리자)
+ *              MIDDLE = 중등 학생 기록만 보기 (초중등부 선생님 — 고등부 선생님이 가르치는 중3 등)
+ *              null = 메뉴 없음 (알바 데스크 등)
+ */
+export function counselAccess(user: Pick<SessionUser, "roles" | "department" | "partTime">): "WRITE" | "MIDDLE" | null {
+  if (user.roles.includes("ADMIN")) return "WRITE";
+  if (user.roles.includes("DESK") && !user.partTime) return "WRITE";
+  if (user.roles.includes("TEACHER")) return user.department === "HIGH" ? "WRITE" : "MIDDLE";
+  return null;
 }
 
 /**
