@@ -172,7 +172,7 @@ export function setExempt(user: SessionUser, studentId: number, on: boolean, not
 
 /**
  * 강제 숙제반 시작일 바꾸기 — 기본은 카운트 2가 된 당일. 그 뒤 날짜로만 미룰 수 있다(같은 분기 안).
- * start = null 이면 원래대로(당일). 졸업은 시작일 다음 SR 검사부터 센다.
+ * start = null 이면 원래대로(당일). 졸업은 시작일 다음 SR 검사부터 센다(이미 졸업했어도 다시 계산).
  */
 export function setForcedStart(user: SessionUser, studentId: number, trigger: string, start: string | null): void {
   assert(can(user, "homework.class"), "숙제반 관리 권한이 없어요.");
@@ -182,7 +182,7 @@ export function setForcedStart(user: SessionUser, studentId: number, trigger: st
   const tl = timeline(marksOf(db).get(st.id) ?? new Map(), checkDatesOf(st, q.start, today()), q.start, today(), hwStartsOf(db).get(st.id));
   const c = tl.cycles.find((x) => x.trigger === trigger);
   assert(c, "그 강제 숙제반을 찾을 수 없어요. 화면을 새로고침해 주세요.");
-  assert(!c.gradAt, "이미 졸업한 강제 숙제반은 시작일을 바꿀 수 없어요.");
+  // 이미 시작했거나 졸업한 것도 바꿀 수 있다 — 졸업(4번 연속)은 새 시작일 기준으로 다시 센다
   if (!start || start === trigger) {
     db.prepare("DELETE FROM hw_start WHERE student_id = ? AND trigger_date = ?").run(st.id, trigger);
   } else {

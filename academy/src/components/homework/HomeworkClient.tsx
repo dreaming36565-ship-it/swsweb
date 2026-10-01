@@ -681,7 +681,7 @@ function ClassView({
                     </td>
                     <td className="truncate border border-line px-1.5 text-xs" title={c.start !== c.trigger ? `카운트 2 = ${md(c.trigger)} · 시작일 바꿈` : "카운트 2가 된 날 시작"}>
                       <b className={c.start !== c.trigger ? "text-navy-800" : ""}>{mdw(c.start)}</b>
-                      {edit && !c.gradAt && !ex ? (
+                      {edit && !ex ? (
                         <button type="button" className="btn ml-1 px-1 py-0 text-[11px]" onClick={() => open({ kind: "start", studentId: st.id, trigger: c.trigger })}>
                           ✏️
                         </button>
