@@ -355,6 +355,17 @@ export function hwExempts(db: DatabaseSync): Map<number, string> {
   );
 }
 
+/** 강제 숙제반 시작일을 바꾼 것 — 학생id → (카운트 2가 된 날 → 시작일) */
+export function hwStartsOf(db: DatabaseSync): Map<number, Map<string, string>> {
+  const out = new Map<number, Map<string, string>>();
+  const has = (q(db, "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'hw_start'").get() as { n: number }).n > 0;
+  if (!has) return out;
+  for (const r of q(db, "SELECT student_id, trigger_date, start_date FROM hw_start").all() as { student_id: number; trigger_date: string; start_date: string }[]) {
+    out.set(r.student_id, (out.get(r.student_id) ?? new Map<string, string>()).set(r.trigger_date, r.start_date));
+  }
+  return out;
+}
+
 /** 📌 SR 일찍 오기 — "반id|학생id|요일" → 시작 시각(분) */
 export function srEarly(db: DatabaseSync): Map<string, number> {
   const has = (q(db, "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'sr_early'").get() as { n: number }).n > 0;
@@ -393,10 +404,12 @@ export function forcedPlans(db: DatabaseSync, today: string): Map<number, { plan
   }
   const out = new Map<number, { plan: HwPlan }>();
   const exempt = hwExempts(db);
+  const starts = hwStartsOf(db);
   for (const st of homeworkStudents(db)) {
     if (!st.regular || exempt.has(st.id)) continue;
-    const t = timeline(marks.get(st.id) ?? new Map(), checkDatesOf(st, start, today), start, today);
-    if (!t.cur) continue;
+    const t = timeline(marks.get(st.id) ?? new Map(), checkDatesOf(st, start, today), start, today, starts.get(st.id));
+    // 시작일을 뒤로 미뤘으면 그날부터 숙제반 (SR 자리 · 출석체크)
+    if (!t.cur || t.cur.start > today) continue;
     const plan =
       plans.get(st.id) ??
       defaultPlan(slots, { applying: applying.get(st.id) ?? [], regularDays: st.regular.days, busy: (d) => st.busy[d] ?? [], level: st.regular.level });

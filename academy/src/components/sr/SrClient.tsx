@@ -12,6 +12,7 @@ import { IconPrinter } from "../Icons";
 import SeatMap, { type SeatMark } from "./SeatMap";
 import PrintSheet, { type PrintKind } from "./PrintSheet";
 import { apiGet, apiPost, errorMessage } from "@/lib/http";
+import { useDataChanged } from "@/lib/dataChanged";
 import { can, dayLimit } from "@/lib/perm";
 import { playAlarm } from "@/lib/alarm";
 import { classColorMap, LEVEL_COLOR, type ClassColor } from "@/lib/colors";
@@ -94,6 +95,8 @@ export default function SrClient({ user }: { user: SessionUser }) {
   const reload = useCallback(async () => {
     await Promise.all([loadLive(), view === "day" ? loadDay() : view === "next" ? loadNext() : Promise.resolve()]);
   }, [loadLive, loadDay, loadNext, view]);
+  // 시간표 · 반 · 자리를 누가 고치면 (다른 컴퓨터 · 탭 포함) 지금 보는 화면을 바로 다시 불러온다
+  useDataChanged(reload);
 
   useEffect(() => {
     void loadLive();

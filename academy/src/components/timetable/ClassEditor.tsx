@@ -1,7 +1,7 @@
 "use client";
 
 // 반 편집 (관리자) — 반 정보 + 칸(수업 · SR, 칸마다 요일 · 교재) + 학생.
-// 한 요일에는 수업 칸 1개 + SR 칸 1개까지 (출결 · SR 자리가 요일마다 한 번이라서).
+// 한 요일에는 수업 1개 + SR 1개, 또는 수업+수업(같은 선생님)까지 (출결 · SR 자리가 요일마다 한 번이라서).
 
 import { useState } from "react";
 import Modal from "../Modal";
@@ -347,7 +347,7 @@ export default function ClassEditor({ ctx, classId, onClose }: { ctx: Ctx; class
         >
           ＋ 칸 추가
         </button>
-        <p className="mt-1 text-xs text-muted">한 요일에는 수업 칸 1개 + SR 칸 1개까지 넣을 수 있어요. 수업 없이 SR만 쓰는 반(누적오답 · 숙제반)은 SR 칸만 두면 돼요.</p>
+        <p className="mt-1 text-xs text-muted">한 요일에는 수업 1개 + SR 1개, 또는 <b>수업+수업</b>(같은 선생님)까지 넣을 수 있어요. 수업 없이 SR만 쓰는 반(누적오답 · 숙제반)은 SR 칸만 두면 돼요.</p>
       </div>
 
       <div className="mt-3 rounded-xl border border-line bg-navy-50 p-3">

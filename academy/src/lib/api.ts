@@ -16,13 +16,27 @@ export function fail(error: string, status = 400) {
 
 type Handler = (ctx: { user: SessionUser; req: NextRequest }) => Promise<unknown> | unknown;
 
+/**
+ * 자료 버전 — 시간표 · 반 · SR 자리 · 숙제반처럼 다른 화면에 바로 보여야 하는 자료가 바뀌면 올린다.
+ * 4초 폴링(`/api/attendance/pending`)이 돌려주고, 열려 있는 시간표 · SR 화면은 버전이 바뀌면 다시 불러온다.
+ * (다른 컴퓨터 · 다른 탭에서 고쳐도 새로고침 없이 반영)
+ */
+const WATCHED = ["/api/classes", "/api/timetable", "/api/rooms", "/api/students", "/api/books", "/api/sr", "/api/homework", "/api/purge", "/api/backup"];
+const ver = globalThis as unknown as { __academyDataVer?: number };
+export const dataVersion = () => (ver.__academyDataVer ??= Date.now());
+const bumpData = () => {
+  ver.__academyDataVer = Math.max(Date.now(), dataVersion() + 1);
+};
+
 /** 로그인 확인 + 오류를 한국어 메시지로 변환하는 라우트 래퍼 */
 export function withUser(handler: Handler) {
   return async (req: NextRequest) => {
     try {
       const user = await getSessionUser();
       if (!user) return fail("로그인이 필요합니다.", 401);
-      return ok(await handler({ user, req }));
+      const data = await handler({ user, req });
+      if (req.method !== "GET" && WATCHED.some((p) => req.nextUrl.pathname.startsWith(p))) bumpData();
+      return ok(data);
     } catch (e) {
       if (e instanceof AppError) return fail(e.message, e.status);
       console.error(e);

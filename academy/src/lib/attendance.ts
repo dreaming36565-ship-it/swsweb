@@ -7,12 +7,16 @@
 
 import type { AttendanceRecord, AttStatus, CallState, Checker, SessionType } from "./types";
 
-/** 출결이 시작되는 시각과 1차 체크 담당 — 알파가 먼저면 데스크, 아니면 담당 선생님. 숙제반은 늘 데스크 */
-export function triggerOf(s: { startMin: number; alphaStartMin: number | null; type?: SessionType }): {
+/**
+ * 출결이 시작되는 시각과 1차 체크 담당 — 알파가 먼저면 데스크, 아니면 담당 선생님. 숙제반은 늘 데스크.
+ * alphaIsSr = 0 이면 알파 칸이 교실 = 두 번째 수업(수업+수업) → 먼저 시작하는 수업에 담당 선생님.
+ */
+export function triggerOf(s: { startMin: number; alphaStartMin: number | null; alphaIsSr?: number; type?: SessionType }): {
   triggerMin: number;
   checker: Checker;
 } {
   if (s.type === "HOMEWORK") return { triggerMin: Math.min(s.startMin, s.alphaStartMin ?? s.startMin), checker: "DESK" };
+  if (s.alphaIsSr === 0) return { triggerMin: Math.min(s.startMin, s.alphaStartMin ?? s.startMin), checker: "TEACHER" };
   if (s.alphaStartMin !== null && s.alphaStartMin < s.startMin) {
     return { triggerMin: s.alphaStartMin, checker: "DESK" };
   }

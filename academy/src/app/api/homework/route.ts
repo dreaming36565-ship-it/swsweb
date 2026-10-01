@@ -12,6 +12,7 @@ import {
   setLateDate,
   setLateDone,
   setExempt,
+  setForcedStart,
   setMark,
 } from "@/lib/repo";
 import type { HwPlan } from "@/lib/homework";
@@ -28,6 +29,7 @@ type Body =
   | { action: "CERT"; studentId: number; date: string; state: "OK" | "MISS" | null }
   | { action: "PLAN"; studentId: number; plan: HwPlan }
   | { action: "SEEN"; studentId: number; start: string }
+  | { action: "START"; studentId: number; trigger: string; start: string | null }
   | { action: "EXEMPT"; studentId: number; on: boolean; note?: string | null }
   | { action: "APPLY"; studentId: number; month: string; picks: { day: number; slotId: number }[] }
   | { action: "LATE_DATE"; id: number; date: string; slotId: number }
@@ -48,6 +50,9 @@ export const POST = withUser(async ({ user, req }) => {
       return null;
     case "EXEMPT":
       setExempt(user, b.studentId, b.on === true, b.note ?? null);
+      return null;
+    case "START":
+      setForcedStart(user, b.studentId, b.trigger, b.start ?? null);
       return null;
     case "SEEN":
       markSeen(b.studentId, b.start);

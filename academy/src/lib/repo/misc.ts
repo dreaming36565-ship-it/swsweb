@@ -5,6 +5,7 @@ import { assert } from "../errors";
 import type { Notice, Notification, SessionUser, Task } from "../types";
 import { notify, nowIso, row, rows, type DeptFilter } from "./base";
 import { listSessions } from "./timetable";
+import { listRooms } from "./staff";
 import { roundsOn } from "./absence";
 
 /* -------------------------------------------------------------- 알림/공지/업무 */
@@ -148,6 +149,7 @@ export function todaySchedule(user: SessionUser, dayOfWeek: number, date: string
   const sessions = listSessions(dayOfWeek, "ALL", date);
   const teacher = user.roles.includes("TEACHER");
   const mine = teacher ? sessions.filter((s) => s.teacherId === user.id) : sessions;
+  const srRooms = new Set(listRooms().filter((r) => r.isSr === 1).map((r) => r.id));
   const items: ScheduleItem[] = [];
   for (const s of mine) {
     const srOnly = s.alphaStartMin === s.startMin && s.alphaEndMin === s.endMin;
@@ -160,12 +162,17 @@ export function todaySchedule(user: SessionUser, dayOfWeek: number, date: string
       });
     }
     if (s.alphaStartMin !== null && s.alphaEndMin !== null) {
-      const mission = s.type !== "INDIVIDUAL" && s.type !== "HOMEWORK";
+      // 알파 칸이 교실 = 두 번째 수업 (수업+수업) — 미션지 없음
+      const second = s.alphaRoomId !== null && !srRooms.has(s.alphaRoomId);
+      // 미션지 = SR룸에서 하는 SR만 (개별반 · 숙제반은 필요 없음)
+      const mission = !second && s.type !== "INDIVIDUAL" && s.type !== "HOMEWORK";
       items.push({
         startMin: s.alphaStartMin,
         endMin: s.alphaEndMin,
-        title: `${s.className} SR`,
-        subtitle: [s.alphaRoomName ?? "SR룸", mission ? "📄 미션지 필요" : null].filter(Boolean).join(" · "),
+        title: `${s.className} ${second ? "수업" : "SR"}`,
+        subtitle: second
+          ? [s.alphaRoomName, s.teacherName ? `${s.teacherName}T` : null].filter(Boolean).join(" · ")
+          : [s.alphaRoomName ?? "SR룸", mission ? "📄 미션지 필요" : null].filter(Boolean).join(" · "),
       });
     }
   }

@@ -171,7 +171,7 @@ const SESSION_SELECT = `SELECT s.id, s.day_of_week AS dayOfWeek, s.class_id AS c
                  c.department, s.type, s.label, s.start_min AS startMin, s.end_min AS endMin,
                  s.alpha_start_min AS alphaStartMin, s.alpha_end_min AS alphaEndMin,
                  s.room_id AS roomId, r.name AS roomName,
-                 s.alpha_room_id AS alphaRoomId, ar.name AS alphaRoomName,
+                 s.alpha_room_id AS alphaRoomId, ar.name AS alphaRoomName, COALESCE(ar.is_sr, 1) AS alphaIsSr,
                  s.teacher_id AS teacherId, u.name AS teacherName,
                  (SELECT COUNT(*) FROM student_classes sc JOIN students st ON st.id = sc.student_id
                    WHERE sc.class_id = c.id AND st.active = 1) AS studentCount
@@ -311,7 +311,13 @@ export function listClassModels(): ClassModel[] {
         },
         s.dayOfWeek,
       );
-      if (s.alphaStartMin !== null && s.alphaEndMin !== null) {
+      // 알파 칸이 교실이면 두 번째 수업 (수업+수업)
+      if (s.alphaStartMin !== null && s.alphaEndMin !== null && s.alphaRoomId !== null && !srRooms.has(s.alphaRoomId)) {
+        add(
+          { kind: "CLASS", label: "수업", start: s.alphaStartMin, end: s.alphaEndMin, roomId: s.alphaRoomId, roomName: s.alphaRoomName, teacherId: s.teacherId, teacherName: s.teacherName, bookIds: [] },
+          s.dayOfWeek,
+        );
+      } else if (s.alphaStartMin !== null && s.alphaEndMin !== null) {
         add(
           { kind: "SR", label: "SR", start: s.alphaStartMin, end: s.alphaEndMin, roomId: s.alphaRoomId, roomName: s.alphaRoomName, teacherId: null, teacherName: null, bookIds: [] },
           s.dayOfWeek,
@@ -455,8 +461,18 @@ export function saveClass(input: ClassInput): number {
   for (const d of input.days) {
     const on = input.parts.filter((p) => p.days.includes(d));
     assert(on.length > 0, `${"일월화수목금토"[d]}요일에 칸이 없어요. 요일을 빼거나 칸의 요일에 넣어 주세요.`);
-    assert(on.filter((p) => p.kind === "CLASS").length <= 1, `${"일월화수목금토"[d]}요일에 수업 칸이 두 개예요. 한 요일에는 수업 칸 1개 + SR 칸 1개까지 넣을 수 있어요.`);
-    assert(on.filter((p) => p.kind === "SR").length <= 1, `${"일월화수목금토"[d]}요일에 SR 칸이 두 개예요. 한 요일에는 SR 칸 1개까지 넣을 수 있어요.`);
+    const dn = "일월화수목금토"[d];
+    const cls = on.filter((p) => p.kind === "CLASS").sort((a, b) => a.start - b.start);
+    const srs = on.filter((p) => p.kind === "SR");
+    assert(srs.length <= 1, `${dn}요일에 SR 칸이 두 개예요. 한 요일에는 SR 칸 1개까지 넣을 수 있어요.`);
+    assert(cls.length <= 2, `${dn}요일에 수업 칸이 세 개예요. 한 요일에는 수업 2개(수업+수업) 또는 수업 1개 + SR 1개까지예요.`);
+    if (cls.length === 2) {
+      // 수업+수업 — 두 번째 수업은 알파 자리에 저장한다 (SR 칸과 같이 쓸 수 없음)
+      assert(srs.length === 0, `${dn}요일은 수업 2개 + SR 은 넣을 수 없어요. 수업+수업 또는 수업+SR 중 하나로 해 주세요.`);
+      assert(cls[1].start >= cls[0].end, `${dn}요일 두 수업 칸의 시간이 겹쳐요.`);
+      assert(cls[0].teacherId === cls[1].teacherId, `${dn}요일 두 수업 칸의 담당 선생님이 달라요. 수업+수업은 같은 선생님만 돼요.`);
+      assert(!srRoom || cls[1].roomId !== srRoom.id, `${dn}요일 두 번째 수업 칸의 강의실이 SR룸이에요. SR이면 칸 종류를 SR로 바꿔 주세요.`);
+    }
   }
 
   const department = input.department === "HIGH" ? "HIGH" : "ELEM";
@@ -505,8 +521,10 @@ export function saveClass(input: ClassInput): number {
     const addBook = db.prepare("INSERT OR IGNORE INTO session_books (session_id, book_id) VALUES (?, ?)");
     const used = new Set<number>();
     for (const d of input.days) {
-      const main = input.parts.find((p) => p.kind === "CLASS" && p.days.includes(d));
-      const sr = input.parts.find((p) => p.kind === "SR" && p.days.includes(d));
+      const mains = input.parts.filter((p) => p.kind === "CLASS" && p.days.includes(d)).sort((a, b) => a.start - b.start);
+      const main = mains[0];
+      // 수업+수업이면 두 번째 수업이 알파 자리 (강의실 = 교실)
+      const sr = mains[1] ?? input.parts.find((p) => p.kind === "SR" && p.days.includes(d));
       // 수업 없이 SR만 — 수업 시간 = SR 시간, 강의실 = SR 칸의 강의실, 담당 = 반 담당
       const v = main
         ? {
@@ -518,7 +536,7 @@ export function saveClass(input: ClassInput): number {
             room: main.roomId,
             aRoom: sr ? sr.roomId ?? srRoom?.id ?? null : null,
             teacher: main.teacherId,
-            books: main.bookIds,
+            books: [...new Set(mains.flatMap((p) => p.bookIds))],
           }
         : {
             label: sr!.label.trim() || "SR 자기주도",

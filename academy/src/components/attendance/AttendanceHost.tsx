@@ -6,7 +6,7 @@
 // 출결 결과(지각·결석)는 팝업 없이 담당 선생님·관리자 알림함으로만 간다.
 // 학원앱을 안 보고 있으면(다른 창 · 내려 둠) 윈도우 알림창(오른쪽 아래 작게) + 탭 제목 깜박임 — 소리를 꺼 둬도 알 수 있게.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import CheckPopup from "./CheckPopup";
 import CallPopup from "./CallPopup";
 import MissionPopup from "./MissionPopup";
@@ -15,10 +15,11 @@ import { apiGet } from "@/lib/http";
 import { notifyState } from "@/lib/desktopNotify";
 import { fmtTime } from "@/lib/time";
 import { useDesktopAlert } from "../useDesktopAlert";
+import { DATA_CHANGED } from "@/lib/dataChanged";
 import type { AttendanceGroup, MissionRequest, SessionUser } from "@/lib/types";
 import type { SrAdhocRequest } from "@/lib/repo/sr";
 
-type Payload = { date: string; groups: AttendanceGroup[]; missions: MissionRequest[]; adhocs?: SrAdhocRequest[] };
+type Payload = { date: string; groups: AttendanceGroup[]; missions: MissionRequest[]; adhocs?: SrAdhocRequest[]; ver?: number };
 
 export default function AttendanceHost({ user }: { user: SessionUser }) {
   const [groups, setGroups] = useState<AttendanceGroup[]>([]);
@@ -27,6 +28,7 @@ export default function AttendanceHost({ user }: { user: SessionUser }) {
   const [muted, setMuted] = useState<Record<string, boolean>>({});
   /** 접어 둔 출결 팝업 — 위쪽 띠만 깜박인다 (처리해야 사라짐) */
   const [folded, setFolded] = useState<Record<string, boolean>>({});
+  const ver = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -34,6 +36,11 @@ export default function AttendanceHost({ user }: { user: SessionUser }) {
       setGroups(data.groups);
       setMissions(data.missions ?? []);
       setAdhocs(data.adhocs ?? []);
+      // 누가 시간표 · 반 · SR 자리를 고쳤으면 열려 있는 화면에 알린다 (DATA_CHANGED 를 듣는 화면이 다시 불러옴)
+      if (data.ver !== undefined) {
+        if (ver.current !== null && ver.current !== data.ver) window.dispatchEvent(new Event(DATA_CHANGED));
+        ver.current = data.ver;
+      }
     } catch {
       /* 폴링 실패는 다음 주기에 회복된다 */
     }

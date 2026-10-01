@@ -60,6 +60,9 @@ export function quarterOf(date: string): { start: string; end: string; label: st
 
 export type CycleResult = { d: string; r: "ok" | "fail" | "skip"; m?: Mark };
 export type Cycle = {
+  /** 카운트 2가 된 날 (이 강제 숙제반을 알아보는 열쇠 — 확인 · 시작일 바꾸기에 씀) */
+  trigger: string;
+  /** 숙제반 시작일 — 기본 = trigger(당일). 숙제반 관리에서 바꿀 수 있다(trigger 이후만) */
   start: string;
   startMark: Mark | null;
   startCount: number;
@@ -72,8 +75,10 @@ export type Timeline = { count: number; cur: Cycle | null; cycles: Cycle[] };
 /**
  * 한 학생의 숙제 흐름 (분기 처음부터 오늘까지 날짜순)
  * checkDates: 그 학생이 SR에서 숙제검사를 받는 날 (정규반 요일 + 개별반 금/토)
+ * starts: 바꾼 시작일 (카운트 2가 된 날 → 시작일). 없으면 카운트 2가 된 당일 시작.
+ *         졸업(4번 연속 완료)은 시작일 다음 검사부터 센다.
  */
-export function timeline(marks: Map<string, Mark>, checkDates: string[], from: string, to: string): Timeline {
+export function timeline(marks: Map<string, Mark>, checkDates: string[], from: string, to: string, starts?: Map<string, string>): Timeline {
   let count = 0;
   let cur: Cycle | null = null;
   const cycles: Cycle[] = [];
@@ -100,7 +105,8 @@ export function timeline(marks: Map<string, Mark>, checkDates: string[], from: s
     }
     if (m && m !== "결석") count += MARKS[m].score;
     if (!cur && count >= 2) {
-      cur = { start: d, startMark: m, startCount: count, results: [], streak: 0, gradAt: null };
+      const st = starts?.get(d);
+      cur = { trigger: d, start: st && st > d ? st : d, startMark: m, startCount: count, results: [], streak: 0, gradAt: null };
       cycles.push(cur);
     }
   }
@@ -127,8 +133,8 @@ export function certIssues(cert: Map<string, "OK" | "MISS">, cycle: Cycle, ym: s
  */
 export function certUnchecked(plan: HwPlan, cycle: Cycle, cert: Map<string, "OK" | "MISS">, today: string): string[] {
   const last = cycle.gradAt && cycle.gradAt < today ? cycle.gradAt : addDays(today, -1);
-  if (last <= cycle.start) return [];
-  return datesBetween(addDays(cycle.start, 1), last).filter((d) => plan[dowOf(d)]?.how === "CERT" && !cert.has(d));
+  if (last < cycle.start) return [];
+  return datesBetween(cycle.start, last).filter((d) => plan[dowOf(d)]?.how === "CERT" && !cert.has(d));
 }
 
 /* ---------------------------------------------------------------- 숙제반 칸 */

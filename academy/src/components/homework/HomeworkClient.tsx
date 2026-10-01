@@ -64,7 +64,7 @@ export default function HomeworkClient({ user, initialView }: { user: SessionUse
   const [mine, setMine] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [modal, setModal] = useState<{ kind: "plan" | "late" | "apply" | "form" | "exempt"; studentId?: number; lateId?: number } | null>(null);
+  const [modal, setModal] = useState<{ kind: "plan" | "late" | "apply" | "form" | "exempt" | "start"; studentId?: number; lateId?: number; trigger?: string } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -178,6 +178,9 @@ export default function HomeworkClient({ user, initialView }: { user: SessionUse
           }}
         />
       ) : null}
+      {data && h && modal?.kind === "start" && modal.studentId && modal.trigger ? (
+        <StartModal h={h} studentId={modal.studentId} trigger={modal.trigger} act={act} onClose={() => setModal(null)} />
+      ) : null}
       {data && modal?.kind === "form" ? <FormModal data={data} month={month} months={months} act={act} onClose={() => setModal(null)} /> : null}
       {toast ? <div className="fixed bottom-6 left-1/2 z-[90] -translate-x-1/2 rounded-xl bg-navy-900 px-5 py-2.5 text-sm font-semibold text-white">{toast}</div> : null}
     </div>
@@ -206,6 +209,9 @@ function makeHelpers(data: HomeworkData) {
     cert.set(c.studentId, x);
   }
   const student = (id: number) => data.students.find((s) => s.id === id);
+  /** 강제 숙제반 시작일을 바꾼 것 — 학생 → (카운트 2가 된 날 → 시작일) */
+  const starts = new Map<number, Map<string, string>>();
+  for (const x of data.starts) starts.set(x.studentId, (starts.get(x.studentId) ?? new Map<string, string>()).set(x.trigger, x.start));
   const checkDates = (st: Student, from: string, to: string) => {
     const days = new Set([...(st.regular?.days ?? []), ...st.individualDays]);
     return datesBetween(from, to).filter((d) => days.has(dowOf(d)));
@@ -218,7 +224,7 @@ function makeHelpers(data: HomeworkData) {
     if (hit) return hit;
     const q = quarterOf(`${ym}-01`);
     const to = q.end < today ? q.end : today;
-    const t = timeline(marks.get(st.id) ?? new Map(), checkDates(st, q.start, to), q.start, to);
+    const t = timeline(marks.get(st.id) ?? new Map(), checkDates(st, q.start, to), q.start, to, starts.get(st.id));
     tlCache.set(key, t);
     return t;
   };
@@ -471,7 +477,7 @@ function ClassView({
   setMonth: (m: string) => void;
   months: string[];
   act: Act;
-  open: (m: { kind: "plan" | "late" | "apply" | "exempt"; studentId?: number; lateId?: number }) => void;
+  open: (m: { kind: "plan" | "late" | "apply" | "exempt" | "start"; studentId?: number; lateId?: number; trigger?: string }) => void;
 }) {
   const edit = can(user, "homework.class");
   /** 📷 인증 확인 — 담당T(내 반) · 관리자 · 데스크 */
@@ -483,14 +489,15 @@ function ClassView({
   for (const st of data.students.filter((s) => s.regular)) {
     const t = h.tl(st, month);
     t.cycles.forEach((c, i) => {
-      if (c.start <= end && (c.gradAt ?? "9999") >= days[0]) rows.push({ st, c, i, total: t.cycles.length });
+      if (c.trigger <= end && (c.gradAt ?? "9999") >= days[0]) rows.push({ st, c, i, total: t.cycles.length });
     });
   }
   // 면제 학생은 맨 아래 (명단에만 보임)
-  rows.sort((a, b) => Number(!!a.st.exempt) - Number(!!b.st.exempt) || Number(!!a.c.gradAt) - Number(!!b.c.gradAt) || a.c.start.localeCompare(b.c.start));
+  rows.sort((a, b) => Number(!!a.st.exempt) - Number(!!b.st.exempt) || Number(!!a.c.gradAt) - Number(!!b.c.gradAt) || a.c.trigger.localeCompare(b.c.trigger));
   const active = rows.filter((r) => !r.st.exempt);
-  const seen = (st: Student, start: string) => data.seen.some((s) => s.studentId === st.id && s.start === start);
-  const newForced = active.filter((r) => !r.c.gradAt && r.c.start >= addDays(data.today, -7) && !seen(r.st, r.c.start));
+  // 확인 · 알림은 카운트 2가 된 날(trigger)로 — 시작일을 바꿔도 다시 뜨지 않게
+  const seen = (st: Student, trigger: string) => data.seen.some((s) => s.studentId === st.id && s.start === trigger);
+  const newForced = active.filter((r) => !r.c.gradAt && r.c.trigger >= addDays(data.today, -7) && !seen(r.st, r.c.trigger));
   const lateTodo = data.late.filter((l) => !l.done && !l.date);
   // 지각 「횟수」는 분기마다 0부터지만, 3회를 채워 이미 생긴 숙제반 1회는 다음 분기로 넘어간다
   const qStart = quarterOf(data.today).start;
@@ -521,18 +528,21 @@ function ClassView({
           ))}
           {newForced.map((r) => {
             return (
-              <div key={`${r.st.id}-${r.c.start}`} className="mt-1.5 flex items-center justify-between gap-2 rounded-lg border border-line px-3 py-1.5 text-[13px]">
+              <div key={`${r.st.id}-${r.c.trigger}`} className="mt-1.5 flex items-center justify-between gap-2 rounded-lg border border-line px-3 py-1.5 text-[13px]">
                 <span>
                   <span className={`${tag} bg-alert-soft text-alert`}>강제</span>
-                  <b>{r.st.name}</b>({r.st.regular?.name}) {md(r.c.start)} 카운트 {r.c.startCount} → 자동 등록 · <b>{h.planLabel(h.planOf(r.st))}</b>{" "}
+                  <b>{r.st.name}</b>({r.st.regular?.name}) {md(r.c.trigger)} 카운트 {r.c.startCount} → 자동 등록 · <b>{mdw(r.c.start)} 시작</b> · <b>{h.planLabel(h.planOf(r.st))}</b>{" "}
                   <span className="text-muted">· {teacherLabel(r.st.teacherName)} 알림 보냄</span>
                 </span>
                 {edit ? (
                   <span className="flex gap-1">
+                    <button type="button" className="btn px-2 py-0.5 text-xs" onClick={() => open({ kind: "start", studentId: r.st.id, trigger: r.c.trigger })}>
+                      시작일
+                    </button>
                     <button type="button" className="btn px-2 py-0.5 text-xs" onClick={() => open({ kind: "plan", studentId: r.st.id })}>
                       요일 바꾸기
                     </button>
-                    <button type="button" className="btn px-2 py-0.5 text-xs" onClick={() => void act({ action: "SEEN", studentId: r.st.id, start: r.c.start })}>
+                    <button type="button" className="btn px-2 py-0.5 text-xs" onClick={() => void act({ action: "SEEN", studentId: r.st.id, start: r.c.trigger })}>
                       확인
                     </button>
                   </span>
@@ -596,13 +606,14 @@ function ClassView({
           </button>
         ) : null}
         <span className="text-xs text-muted">
-          카운트 2가 된 날 시작 → 그 뒤 SR 숙제검사 <b>4번 연속 완료</b>면 졸업 (미흡이면 0부터 · 결석은 건너뜀). 숙제검사 표와 자동으로 이어져요.
+          카운트 2가 된 날 시작(시작일 ✏️ 로 바꿀 수 있음) → 그 뒤 SR 숙제검사 <b>4번 연속 완료</b>면 졸업 (미흡이면 0부터 · 결석은 건너뜀). 숙제검사 표와 자동으로 이어져요.
         </span>
         <div className="mt-2 overflow-auto">
           <table className="table-fixed border-collapse bg-white text-[11px]">
             <colgroup>
               <col style={{ width: 220 }} />
               <col style={{ width: 140 }} />
+              <col style={{ width: 84 }} />
               <col style={{ width: 96 }} />
               {days.map((d) => (
                 <col key={d} style={{ width: 30 }} />
@@ -612,6 +623,7 @@ function ClassView({
               <tr>
                 <th className="h-[30px] border border-line bg-navy-50 text-muted">학생</th>
                 <th className="border border-line bg-navy-50 text-muted">숙제반 요일</th>
+                <th className="border border-line bg-navy-50 text-muted">시작일</th>
                 <th className="border border-line bg-navy-50 text-muted">연속 성공</th>
                 {days.map((d) => (
                   <th key={d} className={`border border-line bg-navy-50 leading-tight ${dowOf(d) === 0 ? "text-alert" : "text-muted"}`}>
@@ -625,7 +637,7 @@ function ClassView({
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={days.length + 3} className="h-10 border border-line text-center text-muted">
+                  <td colSpan={days.length + 4} className="h-10 border border-line text-center text-muted">
                     이 달에는 강제 숙제반 학생이 없어요.
                   </td>
                 </tr>
@@ -637,7 +649,7 @@ function ClassView({
                 const blockedFrom = iss[1]?.d; // 2번째 문제가 난 날 뒤로는 인증 불가
                 const applying = data.apply.some((a) => a.studentId === st.id && a.month === month);
                 return (
-                  <tr key={`${st.id}-${c.start}`} className={ex ? "bg-navy-50 text-muted" : ""}>
+                  <tr key={`${st.id}-${c.trigger}`} className={ex ? "bg-navy-50 text-muted" : ""}>
                     <td className="h-[30px] truncate border border-line px-1.5 text-xs">
                       <b>{st.name}</b> <span className="text-muted">{st.regular?.name}</span>
                       {ex ? <span className="ml-1 rounded bg-white px-1 font-extrabold text-muted ring-1 ring-line">면제</span> : null}
@@ -667,6 +679,14 @@ function ClassView({
                         </button>
                       ) : null}
                     </td>
+                    <td className="truncate border border-line px-1.5 text-xs" title={c.start !== c.trigger ? `카운트 2 = ${md(c.trigger)} · 시작일 바꿈` : "카운트 2가 된 날 시작"}>
+                      <b className={c.start !== c.trigger ? "text-navy-800" : ""}>{mdw(c.start)}</b>
+                      {edit && !c.gradAt && !ex ? (
+                        <button type="button" className="btn ml-1 px-1 py-0 text-[11px]" onClick={() => open({ kind: "start", studentId: st.id, trigger: c.trigger })}>
+                          ✏️
+                        </button>
+                      ) : null}
+                    </td>
                     <td className="border border-line px-1.5 text-xs">
                       {c.gradAt ? (
                         <b className="text-ok">🎓 {md(c.gradAt)} 졸업</b>
@@ -682,13 +702,15 @@ function ClassView({
                     </td>
                     {days.map((d) => {
                       const r = c.results.find((x) => x.d === d);
-                      const inCycle = d > c.start && (!c.gradAt || d <= c.gradAt);
+                      // 시작일 당일부터 숙제반 (카운트 2가 된 당일이 기본)
+                      const inCycle = d >= c.start && (!c.gradAt || d <= c.gradAt);
                       const p = inCycle ? plan[dowOf(d)] : undefined;
                       let how: "ATTEND" | "CERT" | "ATTEND!" | null = p ? p.how : null;
                       if (how === "CERT" && blockedFrom && d > blockedFrom) how = "ATTEND!";
                       const ct = h.cert.get(st.id)?.get(d);
                       let inner: React.ReactNode = null;
-                      if (d === c.start) inner = <span className="rounded bg-alert px-0.5 font-extrabold text-white" title={`${c.startMark ?? ""} → 카운트 ${c.startCount}`}>시작</span>;
+                      if (d === c.start) inner = <span className="rounded bg-alert px-0.5 font-extrabold text-white" title={c.start === c.trigger ? `${c.startMark ?? ""} → 카운트 ${c.startCount}` : `시작일 (카운트 2 = ${md(c.trigger)})`}>시작</span>;
+                      else if (d === c.trigger) inner = <span className="font-extrabold text-alert" title={`${c.startMark ?? ""} → 카운트 ${c.startCount} · 시작일 ${md(c.start)}`}>2점</span>;
                       else if (r?.r === "ok") inner = d === c.gradAt ? "🎓" : <span className="text-sm font-black text-ok">✓</span>;
                       else if (r?.r === "fail") inner = <span title={r.m}>✗</span>;
                       else if (r?.r === "skip") inner = "결";
@@ -962,6 +984,53 @@ function ExemptModal({ data, studentId, onClose, onSaved }: { data: HomeworkData
           </button>
         </div>
       ))}
+    </Modal>
+  );
+}
+
+/** 강제 숙제반 시작일 — 기본 = 카운트 2가 된 당일, 그 뒤 날짜로 미룰 수 있다 */
+function StartModal({ h, studentId, trigger, act, onClose }: { h: Helpers; studentId: number; trigger: string; act: Act; onClose: () => void }) {
+  const st = h.student(studentId)!;
+  const cur = h.tl(st, trigger.slice(0, 7)).cycles.find((c) => c.trigger === trigger);
+  const [pick, setPick] = useState(cur?.start ?? trigger);
+  const q = quarterOf(trigger);
+  const last = [addDays(trigger, 31), q.end].sort()[0];
+  // 카운트 2가 된 날부터 2주 (일요일 빼고)
+  const quick = datesBetween(trigger, [addDays(trigger, 14), last].sort()[0]).filter((d) => dowOf(d) !== 0);
+  const save = async (start: string) => {
+    const ok = await act({ action: "START", studentId, trigger, start: start === trigger ? null : start }, `${st.name} 강제 숙제반 ${mdw(start)} 시작`);
+    if (ok) onClose();
+  };
+  return (
+    <Modal
+      open
+      width={560}
+      title={`${st.name} 숙제반 시작일`}
+      subtitle={`카운트 2 = ${mdw(trigger)} (기본 = 그날 시작) · 졸업은 시작일 다음 SR 검사부터`}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>
+            취소
+          </button>
+          <button type="button" className="btn btn-primary" onClick={() => void save(pick)}>
+            저장
+          </button>
+        </>
+      }
+    >
+      <div className="flex flex-wrap gap-1.5">
+        {quick.map((d) => (
+          <button key={d} type="button" className={`btn px-2.5 py-1 text-sm ${pick === d ? "btn-primary" : ""}`} onClick={() => setPick(d)}>
+            {mdw(d)}
+            {d === trigger ? " (당일)" : ""}
+          </button>
+        ))}
+      </div>
+      <label className="mt-3 flex items-center gap-2 text-sm">
+        <span className="text-muted">다른 날짜</span>
+        <input type="date" className="field w-44" min={trigger} max={last} value={pick} onChange={(e) => e.target.value && setPick(e.target.value)} />
+      </label>
     </Modal>
   );
 }

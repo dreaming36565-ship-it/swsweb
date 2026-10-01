@@ -415,6 +415,14 @@ CREATE TABLE IF NOT EXISTS hw_seen (
   PRIMARY KEY (student_id, start)
 );
 
+-- 강제 숙제반 시작일 바꾸기 (기본 = 카운트 2가 된 당일) — 학생 · 카운트 2가 된 날 → 시작일
+CREATE TABLE IF NOT EXISTS hw_start (
+  student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  trigger_date TEXT NOT NULL,
+  start_date TEXT NOT NULL,
+  PRIMARY KEY (student_id, trigger_date)
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -535,6 +543,8 @@ const MIGRATIONS: ((db: DatabaseSync) => void)[] = [
     ensureColumn(db, "students", "hw_exempt", "INTEGER NOT NULL DEFAULT 0");
     ensureColumn(db, "students", "hw_exempt_note", "TEXT");
   },
+  // 8: 강제 숙제반 시작일 바꾸기 hw_start (테이블은 SCHEMA) (2026-10-02)
+  () => {},
 ];
 
 const g = globalThis as unknown as { __academyDb?: DatabaseSync; __academyDbReady?: Promise<void> };

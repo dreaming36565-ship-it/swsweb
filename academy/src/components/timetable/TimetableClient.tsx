@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiGet, errorMessage } from "@/lib/http";
+import { useDataChanged } from "@/lib/dataChanged";
 import { can, dayLimit } from "@/lib/perm";
 import { DAY_LABELS, minutesOfDay } from "@/lib/time";
 import { teacherLabel, type Book, type ClassModel, type Conflict, type Room, type RoomBooking, type SessionUser, type TempSwap } from "@/lib/types";
@@ -109,6 +110,8 @@ export default function TimetableClient({ user, initialView }: { user: SessionUs
   useEffect(() => {
     void reload();
   }, [reload]);
+  // 다른 컴퓨터 · 탭에서 반 · 시간을 고치면 바로 다시 불러온다
+  useDataChanged(reload);
 
   // 지금 시각 — 1분마다
   useEffect(() => {

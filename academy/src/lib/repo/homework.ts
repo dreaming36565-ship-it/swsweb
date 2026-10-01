@@ -4,8 +4,8 @@
 import { getDb } from "../db";
 import { AppError, assert } from "../errors";
 import { can } from "../perm";
-import { checkDatesOf, forcedPlans, homeworkSlots, homeworkStudents, hwExempts, marksOf, type HwStudent } from "../seed";
-import { certUnchecked, clashOn, isMark, md, parseApplyText, quarterOf, timeline, type HwPlan, type HwSlot, type Mark } from "../homework";
+import { checkDatesOf, forcedPlans, homeworkSlots, homeworkStudents, hwExempts, hwStartsOf, marksOf, type HwStudent } from "../seed";
+import { addDays, certUnchecked, clashOn, isMark, md, parseApplyText, quarterOf, timeline, type HwPlan, type HwSlot, type Mark } from "../homework";
 import { SEATS, seatBlocker } from "../sr";
 import { monthDayWeek, rangeLabel } from "../time";
 import type { SessionUser } from "../types";
@@ -27,6 +27,8 @@ export type HomeworkData = {
   apply: { studentId: number; slotId: number; month: string; day: number }[];
   late: { id: number; studentId: number; lates: string[]; date: string | null; slotId: number | null; done: boolean }[];
   seen: { studentId: number; start: string }[];
+  /** 강제 숙제반 시작일을 바꾼 것 (카운트 2가 된 날 → 시작일) */
+  starts: { studentId: number; trigger: string; start: string }[];
   slots: HwSlot[];
   formUrl: string | null;
 };
@@ -77,6 +79,7 @@ export function homeworkData(): HomeworkData {
       db.prepare("SELECT id, student_id AS studentId, lates, date, slot_class_id AS slotId, done FROM hw_late ORDER BY id").all(),
     ).map((l) => ({ ...l, lates: l.lates.split(",").filter(Boolean), done: l.done === 1 })),
     seen: rows(db.prepare("SELECT student_id AS studentId, start FROM hw_seen").all()),
+    starts: rows(db.prepare("SELECT student_id AS studentId, trigger_date AS trigger, start_date AS start FROM hw_start").all()),
     slots: homeworkSlots(db),
     formUrl: getSetting("hw_form_csv_url"),
   };
@@ -104,10 +107,11 @@ export function setMark(user: SessionUser, studentId: number, date: string, mark
     assert((mine?.n ?? 0) > 0, "선생님은 내 반 학생만 기입할 수 있어요.");
   }
   const q = quarterOf(today());
-  const before = timeline(marksOf(db).get(studentId) ?? new Map(), checkDatesOf(st, q.start, today()), q.start, today());
+  const starts = hwStartsOf(db).get(studentId);
+  const before = timeline(marksOf(db).get(studentId) ?? new Map(), checkDatesOf(st, q.start, today()), q.start, today(), starts);
   if (mark) db.prepare("INSERT OR REPLACE INTO hw_marks (student_id, date, mark) VALUES (?, ?, ?)").run(studentId, date, mark);
   else db.prepare("DELETE FROM hw_marks WHERE student_id = ? AND date = ?").run(studentId, date);
-  const after = timeline(marksOf(db).get(studentId) ?? new Map(), checkDatesOf(st, q.start, today()), q.start, today());
+  const after = timeline(marksOf(db).get(studentId) ?? new Map(), checkDatesOf(st, q.start, today()), q.start, today(), starts);
   const started = !before.cur && !!after.cur;
   const graduated = !!before.cur && !after.cur && !!after.cycles.at(-1)?.gradAt;
   if (started || graduated) refreshSr();
@@ -163,6 +167,31 @@ export function setExempt(user: SessionUser, studentId: number, on: boolean, not
   const memo = note?.trim() || null;
   if (on) assert(memo, "면제 사유를 적어 주세요. (예: 어머니 요청)");
   getDb().prepare("UPDATE students SET hw_exempt = ?, hw_exempt_note = ? WHERE id = ?").run(on ? 1 : 0, on ? memo : null, st.id);
+  refreshSr();
+}
+
+/**
+ * 강제 숙제반 시작일 바꾸기 — 기본은 카운트 2가 된 당일. 그 뒤 날짜로만 미룰 수 있다(같은 분기 안).
+ * start = null 이면 원래대로(당일). 졸업은 시작일 다음 SR 검사부터 센다.
+ */
+export function setForcedStart(user: SessionUser, studentId: number, trigger: string, start: string | null): void {
+  assert(can(user, "homework.class"), "숙제반 관리 권한이 없어요.");
+  const st = studentOf(studentId);
+  const db = getDb();
+  const q = quarterOf(trigger);
+  const tl = timeline(marksOf(db).get(st.id) ?? new Map(), checkDatesOf(st, q.start, today()), q.start, today(), hwStartsOf(db).get(st.id));
+  const c = tl.cycles.find((x) => x.trigger === trigger);
+  assert(c, "그 강제 숙제반을 찾을 수 없어요. 화면을 새로고침해 주세요.");
+  assert(!c.gradAt, "이미 졸업한 강제 숙제반은 시작일을 바꿀 수 없어요.");
+  if (!start || start === trigger) {
+    db.prepare("DELETE FROM hw_start WHERE student_id = ? AND trigger_date = ?").run(st.id, trigger);
+  } else {
+    assert(/^\d{4}-\d{2}-\d{2}$/.test(start), "날짜를 골라 주세요.");
+    assert(start > trigger, `시작일은 카운트 2가 된 날(${md(trigger)}) 뒤로만 바꿀 수 있어요.`);
+    assert(start <= q.end, `시작일은 이번 분기(~${md(q.end)}) 안에서 골라 주세요.`);
+    assert(start <= addDays(trigger, 31), "시작일은 카운트 2가 된 날부터 한 달 안에서 골라 주세요.");
+    db.prepare("INSERT OR REPLACE INTO hw_start (student_id, trigger_date, start_date) VALUES (?, ?, ?)").run(st.id, trigger, start);
+  }
   refreshSr();
 }
 
@@ -362,12 +391,13 @@ export function remindCerts(): void {
     cert.set(c.student_id, (cert.get(c.student_id) ?? new Map()).set(c.date, c.state));
   }
   const plans = forcedPlans(db, t);
+  const starts = hwStartsOf(db);
   const byTeacher = new Map<number, string[]>();
   for (const st of homeworkStudents(db)) {
     const p = plans.get(st.id);
     const teacher = st.regular?.teacherId;
     if (!p || !teacher) continue;
-    const tl = timeline(marks.get(st.id) ?? new Map(), checkDatesOf(st, q.start, t), q.start, t);
+    const tl = timeline(marks.get(st.id) ?? new Map(), checkDatesOf(st, q.start, t), q.start, t, starts.get(st.id));
     if (!tl.cur) continue;
     const miss = certUnchecked(p.plan, tl.cur, cert.get(st.id) ?? new Map(), t);
     if (miss.length) byTeacher.set(teacher, [...(byTeacher.get(teacher) ?? []), `${st.name} ${miss.map(md).join(", ")}`]);

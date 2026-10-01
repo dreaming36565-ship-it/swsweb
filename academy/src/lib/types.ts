@@ -142,6 +142,8 @@ export type TimetableSession = {
   roomName: string | null;
   alphaRoomId: number | null;
   alphaRoomName: string | null;
+  /** 1 = 알파(SR룸) · 0 = 알파 칸이 교실 = 두 번째 수업 (수업+수업) */
+  alphaIsSr?: number;
   teacherId: number | null;
   teacherName: string | null;
   studentCount: number;
