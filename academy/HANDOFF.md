@@ -965,3 +965,9 @@ npm run dev --prefix academy     # http://127.0.0.1:3100 (localhost 가 안 열�
 - DB(마이그레이션 11): `exam_docs` · `exam_doc_edits` · `users.exam_docs`. API: `api/examdocs`(목록 · 덮어 보일 문장 · 저장) · `api/examdocs/file` · `api/examdocs/admin` · `api/examdocs/sync`.
 - 확인함(이 컴퓨터, 데모 DB): 정필드T만 메뉴 · 최나영T/이예진 막힘 · 직원 저장 → 확인 중 → 다시 열어도 유지 → 관리자 반영 → sync 로 PDF · 문서 갱신. 시험 기록은 지움.
 - 배포 뒤 할 일: 관리자가 「PDF 만들기」 탭 연결 열쇠를 복사해 주면 → `python sync_edits.py --url https://swsweb-production.up.railway.app --key <열쇠> --all` 로 리포트 6개 올리기.
+
+### 15.34 다음에 할 일 (2026-10-02 저장 시점)
+- **지금 상태**: 📄 기출분석 배포됨(f34f565). 메뉴는 관리자 + 정필드T. 문서는 아직 안 올라감.
+1. 관리자가 「기출분석 › PDF 만들기」 연결 열쇠를 주면 exam-reports 에서 `python sync_edits.py --url https://swsweb-production.up.railway.app --key <열쇠> --all` → 리포트 6개 올리기.
+2. 사용자 · 정필드T 시험 → 괜찮으면 「보이는 사람」 탭에서 다른 직원 열기(사용자가 직접 가능).
+3. 15.32 의 남은 일(강사 체크리스트 새 설계 등) 그대로. 새 대화 첫 마디 **"학원 앱 이어서 하자"**.
