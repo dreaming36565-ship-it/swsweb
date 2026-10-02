@@ -56,7 +56,9 @@ CREATE TABLE IF NOT EXISTS users (
   work_days TEXT NOT NULL DEFAULT '',
   -- 마지막으로 앱을 켜 둔 시각(4초 폴링) · 그 컴퓨터 윈도우 알림 상태(granted/default/denied/none)
   seen_at TEXT,
-  notify_state TEXT
+  notify_state TEXT,
+  -- 📄 기출분석 메뉴 보이기 (관리자는 항상, 알바는 안 보임)
+  exam_docs INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS rooms (
@@ -474,6 +476,34 @@ CREATE TABLE IF NOT EXISTS counsels (
 );
 CREATE INDEX IF NOT EXISTS idx_counsels_date ON counsels(date);
 
+-- 📄 기출분석 문서 (리포트 · 블로그 원고). HTML 파일은 DATA_DIR/examdocs/<id>.html — 학원 컴퓨터가 올린다
+CREATE TABLE IF NOT EXISTS exam_docs (
+  id TEXT PRIMARY KEY,
+  grp TEXT NOT NULL,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  order_no INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
+-- 문서 문장 수정 — 직원 = PENDING(원장님 확인) / 관리자 = 바로 APPROVED. synced_at = 학원 컴퓨터가 받아 PDF에 넣은 때
+CREATE TABLE IF NOT EXISTS exam_doc_edits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  doc_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  before TEXT NOT NULL DEFAULT '',
+  after TEXT NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  user_name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'PENDING',
+  decided_at TEXT,
+  decided_by TEXT,
+  synced_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_exam_doc_edits_status ON exam_doc_edits(status);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -602,6 +632,11 @@ const MIGRATIONS: ((db: DatabaseSync) => void)[] = [
   },
   // 10: 📝 상담기록 counsels (테이블은 SCHEMA) (2026-10-02)
   () => {},
+  // 11: 📄 기출분석 문서 수정 (테이블은 SCHEMA) — 처음엔 관리자 + 정필드T 만 메뉴가 보인다 (2026-10-02)
+  (db) => {
+    ensureColumn(db, "users", "exam_docs", "INTEGER NOT NULL DEFAULT 0");
+    db.prepare("UPDATE users SET exam_docs = 1 WHERE name = ?").run("정필드");
+  },
 ];
 
 const g = globalThis as unknown as { __academyDb?: DatabaseSync; __academyDbReady?: Promise<void> };
@@ -620,6 +655,7 @@ function open(): DatabaseSync {
       db.exec(SCHEMA);
       seedDemo(db);
       seedSchools(db);
+      db.prepare("UPDATE users SET exam_docs = 1 WHERE name = ?").run("정필드"); // 📄 기출분석 (마이그레이션 11과 같게)
       db.exec(`PRAGMA user_version = ${MIGRATIONS.length}`);
       db.exec("COMMIT");
     } catch (e) {

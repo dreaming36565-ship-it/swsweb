@@ -75,6 +75,16 @@ export function counselAccess(user: Pick<SessionUser, "roles" | "department" | "
 }
 
 /**
+ * 📄 기출분석 — ADMIN = 문서 바로 고치기 · 확인 대기 반영/거절 · 수정 기록 · 보이는 사람 정하기
+ *              EDIT = 문서 고치기(원장님 확인 후 반영) — 관리자가 고른 직원만 (알바 제외)
+ */
+export function examDocsAccess(user: Pick<SessionUser, "roles" | "partTime" | "examDocs">): "ADMIN" | "EDIT" | null {
+  if (user.roles.includes("ADMIN")) return "ADMIN";
+  if (user.examDocs && !user.partTime) return "EDIT";
+  return null;
+}
+
+/**
  * 알바 근무 요일 제한 — 시간표 · SR 화면은 근무 요일만 (결석관리 등은 제한 없음).
  * 관리자이거나 정직원이면 null (제한 없음).
  */

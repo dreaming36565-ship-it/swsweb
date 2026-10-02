@@ -62,9 +62,10 @@ type UserRow = {
   must_change_pw: number;
   employment: string;
   work_days: string;
+  exam_docs: number;
 };
 
-const USER_COLS = "id, login_id, name, role, roles, department, active, must_change_pw, employment, work_days";
+const USER_COLS = "id, login_id, name, role, roles, department, active, must_change_pw, employment, work_days, exam_docs";
 
 function sign(payload: string): string {
   return createHmac("sha256", getSecret()).update(payload).digest("base64url");
@@ -108,6 +109,7 @@ function toSessionUser(row: UserRow): SessionUser {
     mustChangePw: row.must_change_pw === 1,
     partTime: row.employment === "PART",
     workDays: parseDays(row.work_days),
+    examDocs: row.exam_docs === 1,
   };
 }
 

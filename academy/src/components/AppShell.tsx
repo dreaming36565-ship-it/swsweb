@@ -17,6 +17,7 @@ import {
   IconCheckSquare,
   IconClipboard,
   IconDashboard,
+  IconFileText,
   IconLogout,
   IconMegaphone,
   IconPhone,
@@ -27,7 +28,7 @@ import {
 } from "./Icons";
 import { unlockAudio } from "@/lib/alarm";
 import { apiPost, errorMessage } from "@/lib/http";
-import { counselAccess } from "@/lib/perm";
+import { counselAccess, examDocsAccess } from "@/lib/perm";
 import { DEPARTMENTS, hasRole, rolesLabel, type SessionUser } from "@/lib/types";
 
 function menuFor(user: SessionUser) {
@@ -42,6 +43,7 @@ function menuFor(user: SessionUser) {
     { href: "/homework", label: "숙제 관리", Icon: IconBook },
     ...(counselAccess(user) ? [{ href: "/counsel", label: "상담기록", Icon: IconPhone }] : []),
     { href: "/school", label: "학교 학사일정", Icon: IconSchool },
+    ...(examDocsAccess(user) ? [{ href: "/examdocs", label: "기출분석", Icon: IconFileText }] : []),
     { href: "/notices", label: "알림 & 공지", Icon: IconMegaphone },
     { href: "/tasks", label: "업무 지시", Icon: IconCheckSquare },
     { href: "/settings", label: "설정", Icon: IconSettings },

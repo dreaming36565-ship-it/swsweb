@@ -953,3 +953,15 @@ npm run dev --prefix academy     # http://127.0.0.1:3100 (localhost 가 안 열�
 1. **사용자 확인받을 것(서버)**: 15.30-1 목록 + 졸업한 강제 숙제반 시작일 ✏️.
 2. **✅ 강사 체크리스트 — 시안 엎고 처음부터 다시** (사용자: 「마음에 들지 않아」). 기존 `public/mockups/checklist.html` 은 참고만, 새로 설계. 시작할 때 먼저 **무엇이 마음에 안 들었는지 · 꼭 필요한 일이 뭔지** 사용자에게 묻고 → 새 시안 → "코딩해줘" 대기. (15.27 원본 시트 정보 · 초중등 상담은 원래 학원 프로그램이라는 점은 그대로 참고)
 3. 새 대화 첫 마디 **"학원 앱 이어서 하자"**.
+
+### 15.33 📄 기출분석 — 리포트 문장 고치기 (2026-10-02, exam-reports 세션에서)
+- 사용자: 「기출분석 앱 따로, 학원업무 앱 따로 늘리고 싶지 않다」 → exam-reports 의 직원 공동 수정 사이트(Cloudflare, 개인 링크)를 버리고 **학원앱 메뉴로** 넣음.
+- **보이는 사람**: 관리자 + 관리자가 고른 직원(`users.exam_docs`, 알바 제외 · `perm.ts` `examDocsAccess`). 처음엔 **정필드T만**(마이그레이션 11). 사용자가 시험해 보고 다른 직원에게 열기로 함 → 「기출분석 › 보이는 사람」 탭에서 체크.
+- **화면** `/examdocs` (`components/examdocs/ExamDocsClient.tsx`): 문서 목록 → 문서(iframe, 스크립트 막음 · 같은 주소)에서 ✏️ 수정 → 점선 문장(`[data-k]`) 고치기 → 💾 저장.
+  - 직원 저장 = **확인 대기**(문서에 주황 「확인 중」 표시, 다른 직원에게도 · 이름은 안 보임). 관리자 저장 = 바로 반영.
+  - 관리자 탭: 확인 대기(띄어쓰기 단위 비교 · 반영/거절 · 문서별 전부) · 수정 기록(관리자만, 사람 · 문서 · 결과 거르기) · 보이는 사람 · PDF 만들기(아직 PDF에 안 들어간 반영 · 학원 컴퓨터 연결 열쇠).
+- **문서 · PDF**: 문서 HTML = `DATA_DIR/examdocs/<id>.html` (볼륨). PDF는 학원 컴퓨터만 만들 수 있어 `exam-reports/sync_edits.py`(바탕화면 「기출분석 PDF 다시 만들기」)가 `/api/examdocs/sync`(헤더 `X-Sync-Key`)로 반영된 수정을 받아 → PDF 다시 만들기 → 문서 올리기 → synced 표시.
+  - 사용자 결정: 앱에는 **분석 리포트 6개만**(블로그 원고는 안 올림).
+- DB(마이그레이션 11): `exam_docs` · `exam_doc_edits` · `users.exam_docs`. API: `api/examdocs`(목록 · 덮어 보일 문장 · 저장) · `api/examdocs/file` · `api/examdocs/admin` · `api/examdocs/sync`.
+- 확인함(이 컴퓨터, 데모 DB): 정필드T만 메뉴 · 최나영T/이예진 막힘 · 직원 저장 → 확인 중 → 다시 열어도 유지 → 관리자 반영 → sync 로 PDF · 문서 갱신. 시험 기록은 지움.
+- 배포 뒤 할 일: 관리자가 「PDF 만들기」 탭 연결 열쇠를 복사해 주면 → `python sync_edits.py --url https://swsweb-production.up.railway.app --key <열쇠> --all` 로 리포트 6개 올리기.

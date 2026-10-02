@@ -94,6 +94,8 @@ export type SessionUser = {
   partTime: boolean;
   /** 근무 요일 (0=일 … 6=토) — 알바만 쓴다 */
   workDays: number[];
+  /** 📄 기출분석 메뉴를 보도록 관리자가 고른 직원 */
+  examDocs: boolean;
 };
 
 export type Room = { id: number; name: string; orderNo: number; isSr: 0 | 1; capacity: number | null };

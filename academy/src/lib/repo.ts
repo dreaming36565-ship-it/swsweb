@@ -12,3 +12,4 @@ export * from "./repo/misc";
 export * from "./repo/purge";
 export * from "./repo/school";
 export * from "./repo/counsel";
+export * from "./repo/examdocs";

@@ -24,3 +24,7 @@ academy/public/mockups/
 
 # 타입체크 캐시
 *.tsbuildinfo
+
+# 기출 분석 리포트 스킬 원본 — ~/.claude/skills 에 탑재함, 저장소에 올리지 않는다
+내신분석리포트_스킬_exam-report-builder/
+내신분석리포트_스킬_exam-report-builder.zip
