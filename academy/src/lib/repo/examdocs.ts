@@ -39,20 +39,21 @@ const DOC_DIR = path.join(DATA_DIR, "examdocs");
 const validId = (id: string) => /^[a-z0-9_]{1,60}$/.test(id);
 export const examDocFile = (id: string) => path.join(DOC_DIR, `${id}.html`);
 
+/** 문서 목록 — 분석 리포트만 (사용자 결정 2026-10-02 · 10-03: 블로그 원고는 학원앱에 안 보임) */
 export function listExamDocs(): ExamDoc[] {
   return rows<ExamDoc>(
     getDb()
       .prepare(
         `SELECT d.id, d.grp, d.name, d.kind, d.order_no AS orderNo, d.updated_at AS updatedAt,
                 (SELECT COUNT(*) FROM exam_doc_edits e WHERE e.doc_id = d.id AND e.status = 'PENDING') AS pending
-         FROM exam_docs d ORDER BY d.order_no, d.id`,
+         FROM exam_docs d WHERE d.kind = 'REPORT' ORDER BY d.order_no, d.id`,
       )
       .all(),
   );
 }
 
 export function readExamDocHtml(id: string): string | null {
-  if (!validId(id) || !existsSync(examDocFile(id))) return null;
+  if (!validId(id) || id.startsWith("blog_") || !existsSync(examDocFile(id))) return null;
   return readFileSync(examDocFile(id), "utf-8");
 }
 
@@ -162,6 +163,7 @@ export function checkExamSyncKey(got: string | null): boolean {
 export function putExamDoc(meta: { id: string; grp: string; name: string; kind: string; orderNo: number }, html: string): void {
   assert(validId(meta.id), "문서 이름이 올바르지 않습니다.");
   assert(meta.kind === "REPORT" || meta.kind === "BLOG", "문서 종류가 올바르지 않습니다.");
+  if (meta.kind === "BLOG") return; // 블로그 원고는 올리지 않는다 (사용자 결정)
   mkdirSync(DOC_DIR, { recursive: true });
   writeFileSync(examDocFile(meta.id), html, "utf-8");
   getDb()
