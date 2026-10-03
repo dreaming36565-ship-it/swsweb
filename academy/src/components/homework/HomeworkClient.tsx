@@ -301,16 +301,19 @@ function CheckView({
   const regDays = group === "월수" ? [1, 3] : [2, 4];
   const regDates = all.filter((d) => regDays.includes(dowOf(d)));
   const indDates = all.filter((d) => dowOf(d) === 5 || dowOf(d) === 6);
+  const mineSt = (st: Student) => st.teacherIds.includes(user.id);
+  // 내 반만 = 내가 담임인 반(전원) + 개별반 · 수업 칸에서 내가 가르치는 학생이 있는 반(그 학생만)
+  const members = (classId: number) =>
+    data.students.filter((s) => s.regular?.id === classId && (!mineOnly || data.classes.find((c) => c.id === classId)?.teacherId === user.id || mineSt(s)));
   const classes = data.classes
-    .filter((c) => c.group === group && (!mineOnly || c.teacherId === user.id))
+    .filter((c) => c.group === group && (!mineOnly || members(c.id).length > 0))
     .sort((a, b) => GRADE_SORT.indexOf(a.grade ?? "") - GRADE_SORT.indexOf(b.grade ?? "") || a.name.localeCompare(b.name));
-  const members = (classId: number) => data.students.filter((s) => s.regular?.id === classId);
   const warn = classes.flatMap((c) => members(c.id)).filter((s) => {
     const t = h.tl(s, month);
     return !t.cur && t.count >= 1.5;
   });
   const canEdit = (st: Student) =>
-    can(user, "homework.check") && (hasRole(user, "ADMIN") || hasRole(user, "DESK") || st.teacherName === user.name || st.regular?.teacherId === user.id);
+    can(user, "homework.check") && (hasRole(user, "ADMIN") || hasRole(user, "DESK") || mineSt(st));
 
   const setMark = async (st: Student, date: string, mark: string) => {
     const res = (await act({ action: "MARK", studentId: st.id, date, mark: mark || null })) as { started?: boolean; graduated?: boolean } | false;
@@ -353,7 +356,7 @@ function CheckView({
             <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} /> 내 반만
           </label>
         ) : teacherOnly ? (
-          <span className="text-xs text-muted">선생님은 내 반만 보여요</span>
+          <span className="text-xs text-muted">선생님은 내 반 · 내 개별 학생만 보여요</span>
         ) : null}
       </div>
       {classes.length === 0 ? <p className="text-sm text-muted">볼 수 있는 반이 없어요.</p> : null}
@@ -361,6 +364,7 @@ function CheckView({
         <div key={c.id}>
           <div className="mb-1 mt-3 text-[15px] font-extrabold text-navy-900">
             {c.name} <span className="text-xs font-semibold text-muted">{teacherLabel(c.teacherName)} · {members(c.id).length}명</span>
+            {mineOnly && c.teacherId !== user.id ? <span className="ml-1.5 rounded bg-late-soft px-1.5 py-0.5 text-[11px] font-bold text-late">내 개별 학생만</span> : null}
           </div>
           <div className="overflow-auto">
             <table className="table-fixed border-collapse bg-white text-xs">
@@ -482,7 +486,7 @@ function ClassView({
   const edit = can(user, "homework.class");
   /** 📷 인증 확인 — 담당T(내 반) · 관리자 · 데스크 */
   const certEdit = (st: Student) =>
-    can(user, "homework.cert") && (hasRole(user, "ADMIN") || hasRole(user, "DESK") || st.regular?.teacherId === user.id);
+    can(user, "homework.cert") && (hasRole(user, "ADMIN") || hasRole(user, "DESK") || st.teacherIds.includes(user.id));
   const days = monthDates(month);
   const end = days[days.length - 1];
   const rows: { st: Student; c: Cycle; i: number; total: number }[] = [];

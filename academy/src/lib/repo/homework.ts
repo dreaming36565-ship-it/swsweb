@@ -91,7 +91,7 @@ function studentOf(id: number): HwStudent {
   return st;
 }
 
-/** 숙제검사 기입 — 선생님은 내 반(정규반 또는 개별반 담당)만. 앞날은 안 된다 */
+/** 숙제검사 기입 — 선생님은 내가 가르치는 학생(정규반 담임 · 개별반 · 수업 칸 담당)만. 앞날은 안 된다 */
 export function setMark(user: SessionUser, studentId: number, date: string, mark: string | null): { started: boolean; graduated: boolean } {
   assert(can(user, "homework.check"), "숙제검사를 기입할 권한이 없어요.");
   assert(date <= today(), "아직 오지 않은 날은 기입할 수 없어요.");
@@ -99,12 +99,7 @@ export function setMark(user: SessionUser, studentId: number, date: string, mark
   const db = getDb();
   const st = studentOf(studentId);
   if (!user.roles.includes("ADMIN") && !user.roles.includes("DESK")) {
-    const mine = row<{ n: number }>(
-      db
-        .prepare("SELECT COUNT(*) AS n FROM student_classes sc JOIN classes c ON c.id = sc.class_id WHERE sc.student_id = ? AND c.teacher_id = ?")
-        .get(studentId, user.id),
-    );
-    assert((mine?.n ?? 0) > 0, "선생님은 내 반 학생만 기입할 수 있어요.");
+    assert(st.teacherIds.includes(user.id), "선생님은 내가 가르치는 학생만 기입할 수 있어요.");
   }
   const q = quarterOf(today());
   const starts = hwStartsOf(db).get(studentId);
@@ -126,12 +121,12 @@ export function setMark(user: SessionUser, studentId: number, date: string, mark
   return { started, graduated };
 }
 
-/** 📷 숙제인증 확인 — 담당T(내 반만) · 관리자 · 데스크 */
+/** 📷 숙제인증 확인 — 담당T(내가 가르치는 학생) · 관리자 · 데스크 */
 export function setCert(user: SessionUser, studentId: number, date: string, state: "OK" | "MISS" | null): void {
   assert(can(user, "homework.cert"), "숙제인증을 확인할 권한이 없어요.");
   assert(date <= today(), "아직 오지 않은 날은 기록할 수 없어요.");
   if (!user.roles.includes("ADMIN") && !user.roles.includes("DESK")) {
-    assert(studentOf(studentId).regular?.teacherId === user.id, "선생님은 내 반 학생만 확인할 수 있어요.");
+    assert(studentOf(studentId).teacherIds.includes(user.id), "선생님은 내가 가르치는 학생만 확인할 수 있어요.");
   }
   if (state) getDb().prepare("INSERT OR REPLACE INTO hw_cert (student_id, date, state) VALUES (?, ?, ?)").run(studentId, date, state);
   else getDb().prepare("DELETE FROM hw_cert WHERE student_id = ? AND date = ?").run(studentId, date);

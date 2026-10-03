@@ -226,13 +226,14 @@ type SessionRow = {
   alpha_start_min: number | null;
   alpha_end_min: number | null;
   alpha_is_sr: number;
+  teacher_id: number | null;
 };
 
 function sessionRows(db: DatabaseSync): SessionRow[] {
   return q(
     db,
     `SELECT s.id, s.class_id, s.type, s.day_of_week, s.start_min, s.end_min, s.alpha_start_min, s.alpha_end_min,
-            COALESCE(r.is_sr, 0) AS alpha_is_sr
+            COALESCE(r.is_sr, 0) AS alpha_is_sr, s.teacher_id
        FROM timetable_sessions s LEFT JOIN rooms r ON r.id = s.alpha_room_id`,
   ).all() as SessionRow[];
 }
@@ -263,6 +264,8 @@ export type HwStudent = {
   regular: { id: number; name: string; days: number[]; teacherId: number | null; level: "초등" | "중등" | null } | null;
   individualDays: number[];
   busy: Record<number, [number, number][]>;
+  /** 이 학생을 가르치는 선생님 — 정규반 담임 + 개별반 · 수업 칸 담당(숙제반 칸 제외). 숙제검사 「내 학생」 판단 */
+  teacherIds: number[];
 };
 
 export function homeworkStudents(db: DatabaseSync): HwStudent[] {
@@ -305,6 +308,12 @@ export function homeworkStudents(db: DatabaseSync): HwStudent[] {
       }
     }
     const individual = s.classIds.find((c) => typeOf(c) === "INDIVIDUAL");
+    const teachers = new Set<number>();
+    for (const c of s.classIds) {
+      if (cls.get(c)?.grade === "숙제반") continue;
+      if (cls.get(c)?.teacher_id) teachers.add(cls.get(c)!.teacher_id!);
+      for (const x of sessions) if (x.class_id === c && x.teacher_id) teachers.add(x.teacher_id);
+    }
     out.push({
       id,
       name: s.name,
@@ -319,6 +328,7 @@ export function homeworkStudents(db: DatabaseSync): HwStudent[] {
         : null,
       individualDays: individual ? daysOf(individual) : [],
       busy,
+      teacherIds: [...teachers],
     });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name, "ko"));
