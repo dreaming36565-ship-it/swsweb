@@ -314,6 +314,14 @@ function CheckView({
   });
   const canEdit = (st: Student) =>
     can(user, "homework.check") && (hasRole(user, "ADMIN") || hasRole(user, "DESK") || mineSt(st));
+  // 📷 인증 확인할 학생 — 강제 숙제반 진행 중 · 지난 인증 요일에 확인이 없는 것 (내가 확인할 수 있는 학생만)
+  const certTodo = data.students
+    .filter((st) => st.regular && !st.exempt && can(user, "homework.cert") && (hasRole(user, "ADMIN") || hasRole(user, "DESK") || mineSt(st)))
+    .map((st) => {
+      const c = h.tl(st, data.today.slice(0, 7)).cur;
+      return { st, miss: c ? h.unchecked(st, c) : [] };
+    })
+    .filter((r) => r.miss.length);
 
   const setMark = async (st: Student, date: string, mark: string) => {
     const res = (await act({ action: "MARK", studentId: st.id, date, mark: mark || null })) as { started?: boolean; graduated?: boolean } | false;
@@ -335,6 +343,34 @@ function CheckView({
         </span>
         <Legend />
       </div>
+      {certTodo.length ? (
+        <div className="card px-4 py-2.5">
+          <b>📷 인증 확인할 학생</b> <span className="text-xs text-muted">· 오픈채팅 사진 인증을 했는지 눌러 주세요</span>
+          {certTodo.flatMap(({ st, miss }) =>
+            miss.map((d) => (
+              <div key={`${st.id}-${d}`} className="mt-1.5 flex items-center gap-2 rounded-lg border border-line px-3 py-1.5 text-[13px]">
+                <span className="flex-1">
+                  <b>{st.name}</b> <span className="text-muted">{st.regular?.name} · {mdw(d)} 인증분 · {teacherLabel(st.teacherName)}</span>
+                </span>
+                <button
+                  type="button"
+                  className="rounded-lg border-2 border-ok bg-white px-4 py-1 font-extrabold text-ok hover:bg-ok-soft"
+                  onClick={() => void act({ action: "CERT", studentId: st.id, date: d, state: "OK" }, `📷 ${st.name} 인증됨`)}
+                >
+                  ✅ 인증함
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg border-2 border-alert bg-white px-4 py-1 font-extrabold text-alert hover:bg-alert-soft"
+                  onClick={() => void act({ action: "CERT", studentId: st.id, date: d, state: "MISS" }, `⚠ ${st.name} 미인증 기록`)}
+                >
+                  ❌ 안 함
+                </button>
+              </div>
+            )),
+          )}
+        </div>
+      ) : null}
       {warn.length ? <div className="rounded-xl border border-late bg-late-soft px-4 py-2.5 text-[13px] font-bold text-late">🟠 1.5 — 한 번 더 미흡하면 숙제반: {warn.map((s) => s.name).join(", ")}</div> : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1.5">
