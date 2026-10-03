@@ -12,6 +12,7 @@ import { gradeLevel, planSeats, srRulesFor, type Level, type SrBlock } from "./s
 import { defaultPlan, isMark, quarterOf, timeline, type HwPlan, type HwSlot, type Mark } from "./homework";
 import { BOOK_SUBJECTS, EXAM_ALERT_DAYS, addDays, parseCell } from "./school";
 import { SCHOOL_SEED, SCHOOL_SEED_YEAR } from "./schoolSeed";
+import { studentOff, type Closures } from "./schedule";
 
 /** 한 요일 묶음의 수업 시간. sr 이 있으면 그 시간에 SR룸을 쓴다. */
 type Slot = { days: number[]; start: string; end: string; sr?: [string, string] };
@@ -263,6 +264,8 @@ export type HwStudent = {
   name: string;
   regular: { id: number; name: string; days: number[]; teacherId: number | null; level: "초등" | "중등" | null } | null;
   individualDays: number[];
+  /** 개별반 (📅 휴강 확인용) */
+  individualId: number | null;
   busy: Record<number, [number, number][]>;
   /** 이 학생을 가르치는 선생님 — 정규반 담임 + 개별반 · 수업 칸 담당(숙제반 칸 제외). 숙제검사 「내 학생」 판단 */
   teacherIds: number[];
@@ -327,6 +330,7 @@ export function homeworkStudents(db: DatabaseSync): HwStudent[] {
           }
         : null,
       individualDays: individual ? daysOf(individual) : [],
+      individualId: individual ?? null,
       busy,
       teacherIds: [...teachers],
     });
@@ -334,13 +338,52 @@ export function homeworkStudents(db: DatabaseSync): HwStudent[] {
   return out.sort((a, b) => a.name.localeCompare(b.name, "ko"));
 }
 
-/** 그 학생이 SR에서 숙제검사를 받는 날 (정규반 요일 + 개별반 금/토) */
-export function checkDatesOf(st: HwStudent, from: string, to: string): string[] {
+/** 그 학생이 SR에서 숙제검사를 받는 날 (정규반 요일 + 개별반 금/토). db 를 주면 📅 휴강 날은 뺀다 */
+export function checkDatesOf(st: HwStudent, from: string, to: string, db?: DatabaseSync): string[] {
   const days = new Set([...(st.regular?.days ?? []), ...st.individualDays]);
+  const skip = db ? hwSkip(db, st, from, to) : () => false;
   const out: string[] = [];
   const d = new Date(Number(from.slice(0, 4)), Number(from.slice(5, 7)) - 1, Number(from.slice(8, 10)));
-  for (let k = dateKey(d); k <= to; d.setDate(d.getDate() + 1), k = dateKey(d)) if (days.has(d.getDay())) out.push(k);
+  for (let k = dateKey(d); k <= to; d.setDate(d.getDate() + 1), k = dateKey(d)) if (days.has(d.getDay()) && !skip(k)) out.push(k);
   return out;
+}
+
+/** 📅 휴강 · 보충/옮김 (from ~ to) — DB 를 인자로 받는다 (repo/closures.ts 도 이걸 쓴다) */
+export function closuresOf(db: DatabaseSync, from: string, to: string): Closures {
+  const days = q(db, "SELECT date, off, open, memo FROM sched_days WHERE date BETWEEN ? AND ? ORDER BY date").all(from, to) as {
+    date: string;
+    off: number;
+    open: number;
+    memo: string | null;
+  }[];
+  const classOff = q(db, "SELECT date, class_id, memo FROM sched_class_off WHERE date BETWEEN ? AND ? ORDER BY date").all(from, to) as {
+    date: string;
+    class_id: number;
+    memo: string | null;
+  }[];
+  const moves = q(
+    db,
+    `SELECT id, class_id, kind, from_date, to_date, count_month FROM sched_moves
+      WHERE to_date BETWEEN ? AND ? OR from_date BETWEEN ? AND ? ORDER BY to_date, id`,
+  ).all(from, to, from, to) as { id: number; class_id: number; kind: string; from_date: string | null; to_date: string; count_month: string }[];
+  return {
+    days: days.map((d) => ({ date: d.date, off: d.off === 1, open: d.open === 1, memo: d.memo })),
+    classOff: classOff.map((x) => ({ date: x.date, classId: x.class_id, memo: x.memo })),
+    moves: moves.map((m) => ({
+      id: m.id,
+      classId: m.class_id,
+      kind: m.kind === "MOVE" ? "MOVE" : "EXTRA",
+      fromDate: m.from_date,
+      toDate: m.to_date,
+      countMonth: m.count_month,
+    })),
+  };
+}
+
+/** 숙제검사 — 그 학생이 그 날 휴강이라 검사가 없나 */
+export function hwSkip(db: DatabaseSync, st: HwStudent, from: string, to: string): (d: string) => boolean {
+  const c = closuresOf(db, from, to);
+  return (d) => studentOff(c, d, st);
 }
 
 export function marksOf(db: DatabaseSync): Map<number, Map<string, Mark>> {
@@ -419,7 +462,7 @@ export function forcedPlans(db: DatabaseSync, today: string): Map<number, { plan
   const starts = hwStartsOf(db);
   for (const st of homeworkStudents(db)) {
     if (!st.regular || exempt.has(st.id)) continue;
-    const t = timeline(marks.get(st.id) ?? new Map(), checkDatesOf(st, start, today), start, today, starts.get(st.id));
+    const t = timeline(marks.get(st.id) ?? new Map(), checkDatesOf(st, start, today, db), start, today, starts.get(st.id), hwSkip(db, st, start, today));
     // 시작일을 뒤로 미뤘으면 그날부터 숙제반 (SR 자리 · 출석체크)
     if (!t.cur || t.cur.start > today) continue;
     const plan =

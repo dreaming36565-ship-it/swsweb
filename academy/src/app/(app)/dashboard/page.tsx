@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
-import { attendanceSummary, listNotices, listTasks, todaySchedule } from "@/lib/repo";
+import { attendanceSummary, closureToday, listNotices, listTasks, todaySchedule } from "@/lib/repo";
 import { dateKey, rangeLabel } from "@/lib/time";
 import LiveClock from "@/components/LiveClock";
 import DashboardTasks from "@/components/DashboardTasks";
@@ -17,6 +17,7 @@ export default async function DashboardPage() {
   const tasks = listTasks({ assigneeId: user.id });
   const summary = attendanceSummary(today, "ALL");
   const notices = listNotices(user.department, 3);
+  const off = closureToday(today);
   const honorific = user.roles.includes("TEACHER") ? " 선생님" : "님";
 
   return (
@@ -29,6 +30,12 @@ export default async function DashboardPage() {
         </h1>
         <LiveClock />
       </div>
+
+      {off ? (
+        <div className="rounded-xl border border-late bg-late-soft px-5 py-3 text-base font-bold text-late">
+          📅 오늘 휴강 · {off.all ? `전체${off.name ? ` (${off.name})` : ""} — 출결 · SR · 숙제검사 없음` : `${off.classes.join(" · ")} — 이 반은 출결 · SR · 숙제검사 없음`}
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         {/* 오늘의 일정 */}

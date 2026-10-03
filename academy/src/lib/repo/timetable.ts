@@ -6,6 +6,7 @@ import { rebuildSrSeats, srRoster } from "../seed";
 import { bookShort } from "../books";
 import { detectConflicts, type ConflictSession } from "../conflicts";
 import { rangeLabel, weekDateOf } from "../time";
+import { movedInOn, noLessonOn } from "./closures";
 import type {
   Book,
   ChangeKind,
@@ -203,7 +204,19 @@ export function listSessions(day: number, dept: DeptFilter = "ALL", date?: strin
   );
   if (!date) return list;
   const sw = swappedOn(date);
-  return list.map((s) => (sw.has(s.id) ? applySwap(s) : s));
+  // 📅 휴강(전체 · 반) · 다른 날로 옮겨 간 수업은 빼고, 옮겨 온 수업 · 보충은 더한다 — 출결 · SR · 대시보드가 따라간다
+  const off = noLessonOn(date);
+  if (off.all) return [];
+  const out = list.filter((s) => !off.ids.has(s.classId)).map((s) => (sw.has(s.id) ? applySwap(s) : s));
+  for (const m of movedInOn(date)) {
+    if (off.ids.has(m.classId)) continue;
+    const own = rows<TimetableSession>(getDb().prepare(`${SESSION_SELECT} WHERE s.class_id = ?${w.sql} ORDER BY s.day_of_week, s.start_min`).all(m.classId, ...w.args));
+    const from = m.fromDate ? new Date(`${m.fromDate}T00:00:00`).getDay() : null;
+    const base = own.find((s) => s.dayOfWeek === from) ?? own.find((s) => s.type === "REGULAR" || s.type === "COMMON") ?? own[0];
+    if (!base || out.some((s) => s.id === base.id)) continue;
+    out.push({ ...base, dayOfWeek: day, moved: true });
+  }
+  return out.sort((a, b) => a.startMin - b.startMin || a.id - b.id);
 }
 
 export function listAllSessions(): TimetableSession[] {

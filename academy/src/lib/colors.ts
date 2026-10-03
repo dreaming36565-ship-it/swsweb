@@ -48,3 +48,12 @@ export function classColorMap(classIds: number[]): Map<number, ClassColor> {
   const unique = [...new Set(classIds)].sort((a, b) => a - b);
   return new Map(unique.map((id, i) => [id, PALETTE[i % PALETTE.length]]));
 }
+
+/** 📅 월간 스케줄 안내문(카톡용 그림) — 학원 색 · 수업 칸 색 · 행사 막대 색 (예전 스케줄러 그림과 같게) */
+export const SCHED_BRAND = { U: "#3e7fa3", S: "#2b3a8a" } as const;
+export const SCHED_CELL = { reg: "#dcebf4", ind: "#f9e6d3", free: "#efe3ef", regLab: "#a9d1e6", freeLab: "#d6c4e0" } as const;
+export const SCHED_EVENT_COLORS = ["#fde68a", "#fbcfe8", "#bae6fd", "#fed7aa", "#ddd6fe", "#bbf7d0", "#fecaca", "#99f6e4", "#fef3c7", "#fcd34d", "#fef08a"];
+/** 안내문 글씨 색 (✏️ 글씨 직접 고치기) */
+export const SCHED_TEXT_COLORS = ["#dc2626", "#2563eb", "#3e7fa3", "#2b3a8a", "#d97706", "#16a34a", "#7c3aed", "#db2777", "#111827", "#6b7280"];
+/** 안내문 고정 색 — 공휴일 · 토요일 · 옮김 글씨 · 안내 상자 테두리 */
+export const SCHED_INK = { red: "#dc2626", blue: "#2563eb", move: "#92400e", gray: "#555555", line: "#e5e7eb", box: "#f1f2f4", infoU: "#9cc3dc", infoGray: "#d1d5db", badgeSub: "#fde68a", white: "#ffffff", term: "#d97706", ask: "#555555" } as const;

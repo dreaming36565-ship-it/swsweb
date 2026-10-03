@@ -78,13 +78,21 @@ export type Timeline = { count: number; cur: Cycle | null; cycles: Cycle[] };
  * starts: 바꾼 시작일 (카운트 2가 된 날 → 시작일). 없으면 카운트 2가 된 당일 시작.
  *         졸업(4번 연속 완료)은 시작일 다음 검사부터 센다.
  */
-export function timeline(marks: Map<string, Mark>, checkDates: string[], from: string, to: string, starts?: Map<string, string>): Timeline {
+export function timeline(
+  marks: Map<string, Mark>,
+  checkDates: string[],
+  from: string,
+  to: string,
+  starts?: Map<string, string>,
+  /** 📅 휴강 날 — 검사 없음 (카운트 · 연속 모두 건너뜀) */
+  skip?: (d: string) => boolean,
+): Timeline {
   let count = 0;
   let cur: Cycle | null = null;
   const cycles: Cycle[] = [];
   // 검사일 + 표시가 적힌 날 (시트처럼 금·토 칸 아무 데나 적힌 표시도 센다)
   const marked = [...marks.keys()].filter((d) => d >= from && d <= to);
-  const days = [...new Set([...checkDates.filter((d) => d >= from && d <= to), ...marked])].sort();
+  const days = [...new Set([...checkDates.filter((d) => d >= from && d <= to), ...marked])].filter((d) => !skip?.(d)).sort();
   for (const d of days) {
     const m = marks.get(d) ?? null;
     if (cur && d > cur.start) {
@@ -131,10 +139,10 @@ export function certIssues(cert: Map<string, "OK" | "MISS">, cycle: Cycle, ym: s
  * 📷 확인 안 한 인증 날 — 인증 요일인데 지난 날(수업 당일 자정까지라 다음 날부터)인데 인증됨/미인증 기록이 없음.
  * 담당T에게 알림을 보낼 때 · 숙제반 현황 할 일에 쓴다.
  */
-export function certUnchecked(plan: HwPlan, cycle: Cycle, cert: Map<string, "OK" | "MISS">, today: string): string[] {
+export function certUnchecked(plan: HwPlan, cycle: Cycle, cert: Map<string, "OK" | "MISS">, today: string, skip?: (d: string) => boolean): string[] {
   const last = cycle.gradAt && cycle.gradAt < today ? cycle.gradAt : addDays(today, -1);
   if (last < cycle.start) return [];
-  return datesBetween(cycle.start, last).filter((d) => plan[dowOf(d)]?.how === "CERT" && !cert.has(d));
+  return datesBetween(cycle.start, last).filter((d) => plan[dowOf(d)]?.how === "CERT" && !cert.has(d) && !skip?.(d));
 }
 
 /* ---------------------------------------------------------------- 숙제반 칸 */

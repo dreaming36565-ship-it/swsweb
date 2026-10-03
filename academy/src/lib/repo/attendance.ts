@@ -20,6 +20,7 @@ import type {
 import { deptWhere, isRole, notify, nowIso, nowMin, row, rows, transaction, userIdsWithRole, type DeptFilter } from "./base";
 import { srRoster } from "../seed";
 import { listSessions, sessionOn } from "./timetable";
+import { noLessonOn } from "./closures";
 import { ensureAbsenceFromRecord, makeupDoneByRecord, preRegisteredOn, removeAbsenceForRecord } from "./absence";
 
 // 출결 시각은 그 날짜의 실제 순서(⇄ 하루만 바꾼 순서 포함)를 따른다 — 시작하면 이벤트에 적어 둔다.
@@ -197,6 +198,12 @@ export function triggerAttendance(sessionIds: number[], date: string): void {
   // 실제 시간이 되어야 열 수 있다 — 오늘이면 출결 시작 시각(수업·알파 중 이른 쪽)이 지나야 하고, 앞날은 안 된다
   const todayKey = dateKey(new Date());
   assert(date <= todayKey, "아직 오지 않은 날짜의 출결은 열 수 없습니다.");
+  // 📅 휴강 · 옮겨 간 수업은 열 수 없다
+  const off = noLessonOn(date);
+  for (const id of sessionIds) {
+    const s = sessionOn(id, date);
+    assert(!s || (!off.all && !off.ids.has(s.classId)), `${s?.className ?? ""} 휴강이라 출결이 없어요.`);
+  }
   if (date === todayKey) {
     for (const id of sessionIds) {
       const s = sessionOn(id, date);

@@ -151,6 +151,8 @@ export type TimetableSession = {
   studentCount: number;
   /** 이 날짜만 수업·알파 순서를 바꿨는가 (⇄ 이번 주만) */
   swapped?: boolean;
+  /** 📅 다른 날에서 옮겨 온 수업 · 보충 (그 날짜만) */
+  moved?: boolean;
 };
 
 /* ------------------------------------------------------------ 시간표 (반 + 칸) */

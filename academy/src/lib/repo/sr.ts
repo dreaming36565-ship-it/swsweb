@@ -308,8 +308,9 @@ export function srSnapshot(date: string, opts: { preview?: boolean } = {}): SrSn
 
   // 그 날짜: ⇄ 하루만 바꾼 순서, 오늘만 바뀐 자리, 하원, 임시 자리
   const srRoomIds = new Set(rows<{ id: number }>(db.prepare("SELECT id FROM rooms WHERE is_sr = 1").all()).map((r) => r.id));
+  // 📅 옮겨 온 수업은 주간 자리가 없다 — SR은 ＋ 임시 자리로
   const dayBlocks: SrBlock[] = listSessions(day, "ALL", date)
-    .filter((s) => s.alphaStartMin !== null && s.alphaEndMin !== null && s.alphaRoomId !== null && srRoomIds.has(s.alphaRoomId))
+    .filter((s) => !s.moved && s.alphaStartMin !== null && s.alphaEndMin !== null && s.alphaRoomId !== null && srRoomIds.has(s.alphaRoomId))
     .map((s) => ({ classId: s.classId, day, start: s.alphaStartMin!, end: s.alphaEndMin! }));
   const todaySeats = new Map(
     rows<{ class_id: number; student_id: number; seat: string }>(

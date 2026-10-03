@@ -9,6 +9,7 @@ import { CAT_LABEL, NOTICE_LABEL, catOfReason, statusOf, verdictOf } from "../ma
 import { fmtTime, monthDay, monthDayWeek, parseDateKey } from "../time";
 import { teacherLabel, type Absence, type AbsenceCat, type AbsenceNotice, type RoundState, type SessionUser } from "../types";
 import { notify, nowIso, row, rows, today, transaction, userIdsWithRole } from "./base";
+import { noLessonOn } from "./closures";
 
 type AbsRow = {
   id: number;
@@ -411,9 +412,10 @@ export function preRegisterDates(studentId: number, from: string, to: string) {
   for (let d = parseDateKey(from); ; d.setDate(d.getDate() + 1)) {
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     if (key > to) break;
+    const off = noLessonOn(key); // 📅 휴강 · 옮겨 간 날은 수업이 없다
     for (const c of classes) {
       const s = sessions.find((x) => x.class_id === c.id && x.day_of_week === d.getDay());
-      if (!s) continue;
+      if (!s || off.all || off.ids.has(c.id)) continue;
       out.push({
         date: key,
         classId: c.id,

@@ -52,6 +52,8 @@ export const PERMISSIONS = {
   "tasks.write": ["ADMIN"],
   /** 🏫 학교 학사일정 고치기 (날짜 · 교과서) */
   "school.write": ["ADMIN", "TEACHER", "DESK"],
+  /** 📅 월간 스케줄 — 휴강일 · 보충/옮김 · 행사 · 안내문 (시간표 「📅 월간 스케줄」 탭) */
+  "schedule.write": ["ADMIN", "DESK"],
   /** 🗑 실수·테스트 기록 지우기 (각 화면 🗑 · 설정 › 기록 정리) */
   "records.purge": ["ADMIN"],
 } as const satisfies Record<string, readonly Role[]>;

@@ -15,6 +15,7 @@ import { WEEK } from "./model";
 import { AllView, ConflictBar, ManageView, RoomView, SearchView } from "./views";
 import { DaySheet, OpsLegend, PrintTitle, TeacherWeek, termTitle } from "./opsViews";
 import BooksView from "./BooksView";
+import ScheduleClient from "../schedule/ScheduleClient";
 import StaffView from "./StaffView";
 import ClassDetail from "./ClassDetail";
 import ClassEditor from "./ClassEditor";
@@ -53,7 +54,7 @@ export type Ctx = {
   setError: (msg: string | null) => void;
 };
 
-type View = "day" | "teacher" | "mine" | "room" | "all" | "search" | "manage" | "books" | "staff";
+type View = "day" | "teacher" | "mine" | "room" | "all" | "search" | "manage" | "schedule" | "books" | "staff";
 const VIEWS: [View, string][] = [
   ["day", "요일별"],
   ["teacher", "선생님별 (월~토)"],
@@ -61,6 +62,7 @@ const VIEWS: [View, string][] = [
   ["all", "전체 반"],
   ["search", "학생 찾기"],
   ["manage", "반 관리"],
+  ["schedule", "📅 월간 스케줄"],
   ["books", "교재 책장"],
   ["staff", "계정 · 강의실"],
 ];
@@ -76,11 +78,13 @@ const ALIAS: Record<string, View> = { teacher: "day" };
 /** 선생님 한 주 — 월~금 한 장 + 토·일은 수업이 있을 때만 옆에 (알바는 근무 요일만) */
 const weekDays = (limit: number[] | null) => WEEK.filter((d) => !limit || limit.includes(d));
 
-export default function TimetableClient({ user, initialView }: { user: SessionUser; initialView?: string }) {
+export default function TimetableClient({ user, initialView, initialMonth }: { user: SessionUser; initialView?: string; initialMonth?: string }) {
   const admin = can(user, "timetable.write");
   const full = can(user, "timetable.all");
   const limit = dayLimit(user);
-  const views = full ? VIEWS.filter(([k]) => admin || !ADMIN_VIEWS.includes(k)) : TEACHER_VIEWS;
+  const views = full
+    ? VIEWS.filter(([k]) => (admin || !ADMIN_VIEWS.includes(k)) && (k !== "schedule" || can(user, "schedule.write")))
+    : TEACHER_VIEWS;
   const [view, setView] = useState<View>(() => {
     const want = (initialView && (ALIAS[initialView] ?? initialView)) as View | undefined;
     return views.some(([k]) => k === want) ? want! : views[0][0];
@@ -277,6 +281,8 @@ export default function TimetableClient({ user, initialView }: { user: SessionUs
         <SearchView ctx={ctx} />
       ) : view === "manage" ? (
         <ManageView ctx={ctx} />
+      ) : view === "schedule" ? (
+        <ScheduleClient initialMonth={initialMonth} />
       ) : view === "books" ? (
         <BooksView ctx={ctx} />
       ) : (

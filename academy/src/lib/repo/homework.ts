@@ -4,11 +4,12 @@
 import { getDb } from "../db";
 import { AppError, assert } from "../errors";
 import { can } from "../perm";
-import { checkDatesOf, forcedPlans, homeworkSlots, homeworkStudents, hwExempts, hwStartsOf, marksOf, type HwStudent } from "../seed";
+import { checkDatesOf, closuresOf, forcedPlans, homeworkSlots, homeworkStudents, hwExempts, hwSkip, hwStartsOf, marksOf, type HwStudent } from "../seed";
 import { addDays, certUnchecked, clashOn, isMark, md, parseApplyText, quarterOf, timeline, type HwPlan, type HwSlot, type Mark } from "../homework";
 import { SEATS, seatBlocker } from "../sr";
 import { monthDayWeek, rangeLabel } from "../time";
 import type { SessionUser } from "../types";
+import type { Closures } from "../schedule";
 import { getSetting, notify, nowIso, row, rows, setSetting, today, transaction, userIdsWithRole } from "./base";
 import { latesSince } from "./attendance";
 import { refreshSr } from "./timetable";
@@ -31,6 +32,8 @@ export type HomeworkData = {
   starts: { studentId: number; trigger: string; start: string }[];
   slots: HwSlot[];
   formUrl: string | null;
+  /** 📅 휴강 · 옮김 (숙제검사 칸 · 카운트 · 인증에서 뺀다) */
+  closures: Closures;
 };
 
 /** 지각 3회 → 숙제반 1회 — 분기 안 지각을 세어 3회가 모일 때마다 한 건씩 (이미 쓴 지각은 빼고) */
@@ -82,6 +85,7 @@ export function homeworkData(): HomeworkData {
     starts: rows(db.prepare("SELECT student_id AS studentId, trigger_date AS trigger, start_date AS start FROM hw_start").all()),
     slots: homeworkSlots(db),
     formUrl: getSetting("hw_form_csv_url"),
+    closures: closuresOf(db, addDays(today(), -200), addDays(today(), 70)),
   };
 }
 
@@ -103,10 +107,11 @@ export function setMark(user: SessionUser, studentId: number, date: string, mark
   }
   const q = quarterOf(today());
   const starts = hwStartsOf(db).get(studentId);
-  const before = timeline(marksOf(db).get(studentId) ?? new Map(), checkDatesOf(st, q.start, today()), q.start, today(), starts);
+  const skip = hwSkip(db, st, q.start, today());
+  const before = timeline(marksOf(db).get(studentId) ?? new Map(), checkDatesOf(st, q.start, today(), db), q.start, today(), starts, skip);
   if (mark) db.prepare("INSERT OR REPLACE INTO hw_marks (student_id, date, mark) VALUES (?, ?, ?)").run(studentId, date, mark);
   else db.prepare("DELETE FROM hw_marks WHERE student_id = ? AND date = ?").run(studentId, date);
-  const after = timeline(marksOf(db).get(studentId) ?? new Map(), checkDatesOf(st, q.start, today()), q.start, today(), starts);
+  const after = timeline(marksOf(db).get(studentId) ?? new Map(), checkDatesOf(st, q.start, today(), db), q.start, today(), starts, skip);
   const started = !before.cur && !!after.cur;
   const graduated = !!before.cur && !after.cur && !!after.cycles.at(-1)?.gradAt;
   if (started || graduated) refreshSr();
@@ -174,7 +179,7 @@ export function setForcedStart(user: SessionUser, studentId: number, trigger: st
   const st = studentOf(studentId);
   const db = getDb();
   const q = quarterOf(trigger);
-  const tl = timeline(marksOf(db).get(st.id) ?? new Map(), checkDatesOf(st, q.start, today()), q.start, today(), hwStartsOf(db).get(st.id));
+  const tl = timeline(marksOf(db).get(st.id) ?? new Map(), checkDatesOf(st, q.start, today(), db), q.start, today(), hwStartsOf(db).get(st.id), hwSkip(db, st, q.start, today()));
   const c = tl.cycles.find((x) => x.trigger === trigger);
   assert(c, "그 강제 숙제반을 찾을 수 없어요. 화면을 새로고침해 주세요.");
   // 이미 시작했거나 졸업한 것도 바꿀 수 있다 — 졸업(4번 연속)은 새 시작일 기준으로 다시 센다
@@ -392,9 +397,10 @@ export function remindCerts(): void {
     const p = plans.get(st.id);
     const teacher = st.regular?.teacherId;
     if (!p || !teacher) continue;
-    const tl = timeline(marks.get(st.id) ?? new Map(), checkDatesOf(st, q.start, t), q.start, t, starts.get(st.id));
+    const skip = hwSkip(db, st, q.start, t);
+    const tl = timeline(marks.get(st.id) ?? new Map(), checkDatesOf(st, q.start, t, db), q.start, t, starts.get(st.id), skip);
     if (!tl.cur) continue;
-    const miss = certUnchecked(p.plan, tl.cur, cert.get(st.id) ?? new Map(), t);
+    const miss = certUnchecked(p.plan, tl.cur, cert.get(st.id) ?? new Map(), t, skip);
     if (miss.length) byTeacher.set(teacher, [...(byTeacher.get(teacher) ?? []), `${st.name} ${miss.map(md).join(", ")}`]);
   }
   for (const [id, list] of byTeacher) notify(id, "HOMEWORK_CERT", "📷 숙제인증 확인해주세요", list.join(" · "), "/homework?view=class");

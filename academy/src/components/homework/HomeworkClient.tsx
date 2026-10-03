@@ -33,6 +33,7 @@ import {
   type Timeline,
 } from "@/lib/homework";
 import { DAY_LABELS, rangeLabel } from "@/lib/time";
+import { studentOff } from "@/lib/schedule";
 import { hasRole, teacherLabel, type SessionUser } from "@/lib/types";
 import type { HomeworkData } from "@/lib/repo/homework";
 import type { PurgeKey } from "@/lib/repo/purge";
@@ -212,9 +213,11 @@ function makeHelpers(data: HomeworkData) {
   /** 강제 숙제반 시작일을 바꾼 것 — 학생 → (카운트 2가 된 날 → 시작일) */
   const starts = new Map<number, Map<string, string>>();
   for (const x of data.starts) starts.set(x.studentId, (starts.get(x.studentId) ?? new Map<string, string>()).set(x.trigger, x.start));
+  /** 📅 휴강 날 — 숙제검사 없음 (카운트 · 연속 건너뜀) */
+  const closed = (st: Student, d: string) => studentOff(data.closures, d, st);
   const checkDates = (st: Student, from: string, to: string) => {
     const days = new Set([...(st.regular?.days ?? []), ...st.individualDays]);
-    return datesBetween(from, to).filter((d) => days.has(dowOf(d)));
+    return datesBetween(from, to).filter((d) => days.has(dowOf(d)) && !closed(st, d));
   };
   const tlCache = new Map<string, Timeline>();
   /** 그 달이 속한 분기의 흐름 (오늘까지) */
@@ -224,7 +227,7 @@ function makeHelpers(data: HomeworkData) {
     if (hit) return hit;
     const q = quarterOf(`${ym}-01`);
     const to = q.end < today ? q.end : today;
-    const t = timeline(marks.get(st.id) ?? new Map(), checkDates(st, q.start, to), q.start, to, starts.get(st.id));
+    const t = timeline(marks.get(st.id) ?? new Map(), checkDates(st, q.start, to), q.start, to, starts.get(st.id), (d) => closed(st, d));
     tlCache.set(key, t);
     return t;
   };
@@ -249,8 +252,8 @@ function makeHelpers(data: HomeworkData) {
   };
   const issues = (st: Student, c: Cycle, ym: string) => certIssues(cert.get(st.id) ?? new Map(), c, ym);
   /** 📷 확인 안 한 인증 날 (어제까지) */
-  const unchecked = (st: Student, c: Cycle) => certUnchecked(planOf(st), c, cert.get(st.id) ?? new Map(), today);
-  return { today, marks, cert, student, tl, busy, planOf, planLabel, issues, applyOf, unchecked };
+  const unchecked = (st: Student, c: Cycle) => certUnchecked(planOf(st), c, cert.get(st.id) ?? new Map(), today, (d) => closed(st, d));
+  return { today, marks, cert, student, tl, busy, planOf, planLabel, issues, applyOf, unchecked, closed };
 }
 
 const Legend = () => (
@@ -434,6 +437,12 @@ function CheckView({
                     const v = h.marks.get(st.id)?.get(d) ?? "";
                     const off = ind && !st.individualDays.includes(dowOf(d)) && !v;
                     if (off) return <td key={d} className="h-7 border border-line bg-navy-50" />;
+                    if (h.closed(st, d))
+                      return (
+                        <td key={d} title="휴강 — 숙제검사 없음" className="h-7 border border-line bg-hw-absent text-center text-[11px] font-bold text-muted">
+                          휴강
+                        </td>
+                      );
                     const edit = canEdit(st) && d <= data.today;
                     return (
                       <td
@@ -754,6 +763,10 @@ function ClassView({
                       else if (r?.r === "ok") inner = d === c.gradAt ? "🎓" : <span className="text-sm font-black text-ok">✓</span>;
                       else if (r?.r === "fail") inner = <span title={r.m}>✗</span>;
                       else if (r?.r === "skip") inner = "결";
+                      if (how && h.closed(st, d)) {
+                        how = null;
+                        inner = <span className="text-[11px] font-bold text-muted">휴강</span>;
+                      }
                       let bg = "";
                       let title = "";
                       if (how === "ATTEND" || how === "ATTEND!") {

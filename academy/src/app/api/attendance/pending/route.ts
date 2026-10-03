@@ -1,5 +1,5 @@
 import { dataVersion, strParam, withUser } from "@/lib/api";
-import { adhocRequestsForPopup, missionsForTeacher, pendingGroupsForUser, remindCerts, remindSchoolExams, srAutoPack, tickAttendance, touchUser } from "@/lib/repo";
+import { adhocRequestsForPopup, missionsForTeacher, pendingGroupsForUser, remindCerts, remindSchedule, remindSchoolExams, srAutoPack, tickAttendance, touchUser } from "@/lib/repo";
 import { dateKey, minutesOfDay } from "@/lib/time";
 import { dailyBackup } from "@/lib/backup";
 
@@ -20,6 +20,7 @@ export const GET = withUser(({ user, req }) => {
   srAutoPack();
   remindCerts();
   remindSchoolExams();
+  remindSchedule();
   dailyBackup();
   return { date, groups: pendingGroupsForUser(user, date), missions: missionsForTeacher(user), adhocs: adhocRequestsForPopup(user), ver: dataVersion() };
 });

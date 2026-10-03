@@ -534,6 +534,81 @@ CREATE TABLE IF NOT EXISTS notices (
   created_at TEXT NOT NULL
 );
 
+-- 📅 월간 스케줄 — 휴강일 · 보충/옮김 · 행사 · 안내문 (2026-10-03, 마이그레이션 12)
+-- sched_days: 그 날 전체. off = 전체 휴강 · open = 공휴일이지만 정상수업 · memo = 휴강 이름
+CREATE TABLE IF NOT EXISTS sched_days (
+  date TEXT PRIMARY KEY,
+  off INTEGER NOT NULL DEFAULT 0,
+  open INTEGER NOT NULL DEFAULT 0,
+  memo TEXT,
+  updated_by TEXT,
+  updated_at TEXT
+);
+-- 반만 휴강
+CREATE TABLE IF NOT EXISTS sched_class_off (
+  date TEXT NOT NULL,
+  class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  memo TEXT,
+  PRIMARY KEY (date, class_id)
+);
+-- 보충 · 옮김. MOVE = from_date 수업을 to_date 로 (횟수는 count_month) / EXTRA = to_date 에 보충 1회 (count_month 달 횟수)
+CREATE TABLE IF NOT EXISTS sched_moves (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  from_date TEXT,
+  to_date TEXT NOT NULL,
+  count_month TEXT NOT NULL,
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+-- 다음 달로 넘김 — month 의 차이(delta)를 다음 달 정한 횟수에 반영
+CREATE TABLE IF NOT EXISTS sched_carry (
+  class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  month TEXT NOT NULL,
+  delta INTEGER NOT NULL,
+  PRIMARY KEY (class_id, month)
+);
+-- 학원 행사 막대 (brand U 유투엠 / S 스터디킬러). dy = 안내문 막대 위아래 · ex/ey/es = 이모지 위치 · 크기 · in_note = 안내 글에 한 줄
+CREATE TABLE IF NOT EXISTS sched_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  brand TEXT NOT NULL,
+  title TEXT NOT NULL,
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  color TEXT NOT NULL,
+  emoji TEXT,
+  dy INTEGER NOT NULL DEFAULT 0,
+  ex INTEGER NOT NULL DEFAULT 0,
+  ey INTEGER NOT NULL DEFAULT 0,
+  es INTEGER NOT NULL DEFAULT 30,
+  class_id INTEGER REFERENCES classes(id) ON DELETE CASCADE,
+  in_note INTEGER NOT NULL DEFAULT 0,
+  order_no INTEGER NOT NULL DEFAULT 0
+);
+-- 안내문에 얹은 이모지 (그 학원 · 그 달 안내문 모두에)
+CREATE TABLE IF NOT EXISTS sched_stickers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  brand TEXT NOT NULL,
+  month TEXT NOT NULL,
+  emoji TEXT NOT NULL,
+  x INTEGER NOT NULL,
+  y INTEGER NOT NULL,
+  size INTEGER NOT NULL DEFAULT 36
+);
+-- 안내문 한 장 — note = 고친 「이 달 안내」(NULL = 자동) · html = ✏️ 글씨 직접 고친 그림(NULL = 자동)
+CREATE TABLE IF NOT EXISTS sched_posters (
+  brand TEXT NOT NULL,
+  month TEXT NOT NULL,
+  pkey TEXT NOT NULL,
+  note TEXT,
+  html TEXT,
+  updated_by TEXT,
+  updated_at TEXT,
+  PRIMARY KEY (brand, month, pkey)
+);
+CREATE INDEX IF NOT EXISTS idx_sched_events_date ON sched_events(start_date, end_date);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_day ON timetable_sessions(day_of_week);
 CREATE INDEX IF NOT EXISTS idx_student_classes_class ON student_classes(class_id);
 CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id);
@@ -637,6 +712,8 @@ const MIGRATIONS: ((db: DatabaseSync) => void)[] = [
     ensureColumn(db, "users", "exam_docs", "INTEGER NOT NULL DEFAULT 0");
     db.prepare("UPDATE users SET exam_docs = 1 WHERE name = ?").run("정필드");
   },
+  // 12: 📅 월간 스케줄 — 휴강일 · 보충/옮김 · 행사 · 안내문 (테이블은 SCHEMA) (2026-10-03)
+  () => {},
 ];
 
 const g = globalThis as unknown as { __academyDb?: DatabaseSync; __academyDbReady?: Promise<void> };
